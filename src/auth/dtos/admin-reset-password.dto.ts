@@ -1,3 +1,4 @@
+import { ApiProperty } from '@nestjs/swagger';
 import {
   IsString,
   MinLength,
@@ -13,4 +14,3 @@ export class AdminResetPasswordDto {
   })
   temporaryPassword: string;
 }
-import { ApiProperty } from '@nestjs/swagger';
