@@ -14,6 +14,9 @@ import { UsersService } from '../users/users.service';
 import { LoginDto } from './dtos/login.dto';
 import { RegisterDto } from './dtos/register.dto';
 import { UserRole } from '../users/users-role.enum';
+import { randomBytes } from 'crypto';
+import { randomUUID } from 'crypto';
+import { UserDocument } from '../users/schemas/user.schema';
 // import { error } from 'console';
 
 
@@ -90,7 +93,7 @@ export class AuthService {
     // ACC-05: Successful login resets the counter
     user.failedLoginAttempts = 0;
     user.lockUntil = null;
-
+    user.lastActivityAt = new Date();
     await user.save();
 
     const payload = {
@@ -171,4 +174,87 @@ export class AuthService {
       throw e;
     }
   }
+
+  async logout(userId: string) {
+  await this.usersService.clearRefreshToken(userId);
+
+  return { message: 'Logged out successfully' };
+}
+  private async generateTokens(user: UserDocument) {
+  const payload = {
+    sub: user._id.toString(),
+    role: user.role,
+  };
+
+  const accessToken = await this.jwtService.signAsync(payload, {
+    secret: process.env.JWT_ACCESS_SECRET,
+    expiresIn: '15m',
+  });
+
+  const refreshToken = await this.jwtService.signAsync(
+    {
+      ...payload,
+      jti: randomUUID(),
+    },
+    {
+      secret: process.env.JWT_REFRESH_SECRET,
+      expiresIn: '7d',
+    },
+  );
+
+  user.refreshTokenHash = await bcrypt.hash(refreshToken, 10);
+  await user.save();
+
+  return { accessToken, refreshToken };
+}
+async refresh(refreshToken: string) {
+  if (!refreshToken) {
+    throw new UnauthorizedException('Session expired');
+  }
+
+  let payload: { sub: string; role: string };
+
+  try {
+    payload = await this.jwtService.verifyAsync(refreshToken, {
+      secret: process.env.JWT_REFRESH_SECRET,
+    });
+  } catch {
+    throw new UnauthorizedException('Session expired');
+  }
+
+  const user = await this.usersService.findByIdWithRefreshToken(
+    payload.sub,
+  );
+
+  if (!user || !user.refreshTokenHash) {
+    throw new UnauthorizedException('Session expired');
+  }
+
+  const tokenMatches = await bcrypt.compare(
+    refreshToken,
+    user.refreshTokenHash,
+  );
+
+  if (!tokenMatches) {
+    throw new UnauthorizedException('Session expired');
+  }
+
+  
+  const lastActivity = user.lastActivityAt?.getTime() ?? 0;
+
+  if (Date.now() - lastActivity >= 30 * 60 * 1000) {
+    await this.usersService.clearRefreshToken(user._id.toString());
+
+    throw new UnauthorizedException('Session expired');
+  }
+
+  if (user.isSuspended || user.isDeactivated) {
+    throw new UnauthorizedException('Account unavailable');
+  }
+
+  // Rotate tokens
+  const tokens = await this.generateTokens(user);
+
+  return tokens;
+}
 }

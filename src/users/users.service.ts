@@ -25,4 +25,22 @@ export class UsersService {
   async findById(id: string) {
     return this.userModel.findById(id).exec();
   }
+
+  async updateLastActivity(id: string) {
+    return this.userModel
+      .updateOne({ _id: id }, { $set: { lastActivityAt: new Date() } })
+      .exec();
+  }
+
+  async clearRefreshToken(id: string) {
+  return this.userModel.findByIdAndUpdate(id, {
+    refreshTokenHash: null,
+  });
+}
+async findByIdWithRefreshToken(id: string) {
+  return this.userModel
+    .findById(id)
+    .select('+refreshTokenHash')
+    .exec();
+}
 }

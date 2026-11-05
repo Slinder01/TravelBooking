@@ -2,9 +2,10 @@ import {
   Body,
   Controller,
   Post,
+  Req,
   Res,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
@@ -14,7 +15,8 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-
+import { UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../common/guards/jwt-auth/jwt-auth.guard';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dtos/login.dto';
 import { RegisterDto } from './dtos/register.dto';
@@ -41,18 +43,75 @@ export class AuthController {
   @ApiOkResponse({ description: 'Login successful; access token is set in an HTTP-only cookie' })
   @ApiBadRequestResponse({ description: 'Invalid input' })
   @ApiUnauthorizedResponse({ description: 'Invalid email or password' })
-  async login(@Body() dto: LoginDto, @Res({ passthrough: true }) response: Response) {
-    const result = await this.authService.login(dto);
-    const { accessToken, ...loginResponse } = result;
+  async login(
+  @Body() dto: LoginDto,
+  @Res({ passthrough: true }) response: Response,
+) {
+  const result = await this.authService.login(dto);
 
-    response.cookie('access_token', accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      path: '/',
-      maxAge: 15 * 60 * 1000,
-    });
+  response.cookie('access_token', result.accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 15 * 60 * 1000,
+    path: '/',
+  });
 
-    return loginResponse;
-  }
+  return {
+    message: 'Login successful',
+    user: result.user,
+    redirectTo: result.redirectTo,
+  };
+}
+@Post('logout')
+@UseGuards(JwtAuthGuard)
+async logout(
+  @Req() request: Request & { user: { id: string } },
+  @Res({ passthrough: true }) response: Response,
+) {
+  await this.authService.logout(request.user.id);
+
+  response.clearCookie('access_token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+  });
+
+  response.clearCookie('refresh_token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/api/auth',
+  });
+
+  return { message: 'Logged out successfully' };
+}
+@Post('refresh')
+async refresh(
+  @Req() request: Request,
+  @Res({ passthrough: true }) response: Response,
+) {
+  const refreshToken = request.cookies?.refresh_token;
+
+  const result = await this.authService.refresh(refreshToken);
+
+  response.cookie('access_token', result.accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 15 * 60 * 1000,
+    path: '/',
+  });
+
+  response.cookie('refresh_token', result.refreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: '/api/auth',
+  });
+
+  return { message: 'Session refreshed' };
+}
 }
