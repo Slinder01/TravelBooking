@@ -2,12 +2,14 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-
+import cookieParser from 'cookie-parser';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.use(cookieParser());
 
+  app.setGlobalPrefix('api');
   // 1. Build the OpenAPI configuration document
   const config = new DocumentBuilder()
     .setTitle('Travel Booking API') // Change to your project title

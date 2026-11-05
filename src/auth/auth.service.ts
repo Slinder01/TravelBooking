@@ -1,21 +1,134 @@
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
+  HttpStatus,
   Injectable,
+  UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
+// import { TooManyRequestsException } from '@nestjs/throttler';
+import { JwtService } from '@nestjs/jwt';
+import * as bcrypt from 'bcrypt';
+import { UsersService } from '../users/users.service';
+import { LoginDto } from './dtos/login.dto';
+import { RegisterDto } from './dtos/register.dto';
+import { UserRole } from '../users/users-role.enum';
 // import { error } from 'console';
 
 
-import * as bcrypt from 'bcrypt';
 
-import { UsersService } from '../users/users.service';
-import { RegisterDto } from './dtos/register.dto';
-import { UserRole } from '../users/users-role.enum';
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly jwtService: JwtService,
+  ) {}
 
+   async login(dto: LoginDto) {
+    const email = dto.email.toLowerCase().trim();
+
+    const user = await this.usersService.findByEmail(email);
+
+    
+    if (!user) {
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    
+    if (user.isSuspended) {
+      throw new ForbiddenException('Account suspended');
+    }
+
+    if (user.isDeactivated) {
+      throw new ForbiddenException('Account deactivated');
+    }
+
+    const now = new Date();
+
+    
+    if (user.lockUntil && user.lockUntil > now) {
+      throw new HttpException(
+        'Account locked. Please try again later.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    
+    if (user.lockUntil && user.lockUntil <= now) {
+      user.failedLoginAttempts = 0;
+      user.lockUntil = null;
+    }
+
+    const passwordMatches = await bcrypt.compare(
+      dto.password,
+      user.password,
+    );
+
+    if (!passwordMatches) {
+      user.failedLoginAttempts += 1;
+
+      if (user.failedLoginAttempts >= 5) {
+        user.lockUntil = new Date(
+          Date.now() + 15 * 60 * 1000,
+        );
+
+        await user.save();
+
+        throw new HttpException(
+          'Account locked for 15 minutes due to repeated failed login attempts.',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+
+      await user.save();
+
+      throw new UnauthorizedException('Invalid email or password');
+    }
+
+    // ACC-05: Successful login resets the counter
+    user.failedLoginAttempts = 0;
+    user.lockUntil = null;
+
+    await user.save();
+
+    const payload = {
+      sub: user._id.toString(),
+      email: user.email,
+      role: user.role,
+    };
+
+    const accessToken = await this.jwtService.signAsync(payload);
+
+    return {
+      accessToken,
+      user: {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        mustChangePassword: user.mustChangePassword,
+      },
+      redirectTo: this.getRoleHome(user.role),
+    };
+  }
+
+  private getRoleHome(role: UserRole): string {
+    switch (role) {
+      case UserRole.ADMINISTRATOR:
+        return '/admin';
+
+      case UserRole.AIRLINE_MODERATOR:
+        return '/airline/dashboard';
+
+      case UserRole.HOTEL_MODERATOR:
+        return '/hotel/dashboard';
+
+      default:
+        return '/dashboard';
+    }
+  }
   async register(dto: RegisterDto) {
     if (!dto.termsAccepted) {
       throw new BadRequestException(
