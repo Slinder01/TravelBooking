@@ -6,6 +6,7 @@ import {
   Injectable,
   UnauthorizedException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
 // import { TooManyRequestsException } from '@nestjs/throttler';
 import { JwtService } from '@nestjs/jwt';
@@ -14,8 +15,9 @@ import { UsersService } from '../users/users.service';
 import { LoginDto } from './dtos/login.dto';
 import { RegisterDto } from './dtos/register.dto';
 import { UserRole } from '../users/users-role.enum';
-import { randomBytes } from 'crypto';
 import { randomUUID } from 'crypto';
+import { UpdateProfileDto } from './dtos/update-profile.dto';
+import { ChangePasswordDto } from './dtos/change-password.dto';
 import { UserDocument } from '../users/schemas/user.schema';
 // import { error } from 'console';
 
@@ -95,17 +97,11 @@ export class AuthService {
     user.lockUntil = null;
     user.lastActivityAt = new Date();
     await user.save();
-
-    const payload = {
-      sub: user._id.toString(),
-      email: user.email,
-      role: user.role,
-    };
-
-    const accessToken = await this.jwtService.signAsync(payload);
+    const { accessToken, refreshToken } = await this.generateTokens(user);
 
     return {
       accessToken,
+      refreshToken,
       user: {
         id: user._id.toString(),
         name: user.name,
@@ -180,6 +176,23 @@ export class AuthService {
 
   return { message: 'Logged out successfully' };
 }
+
+  async getCurrentUser(userId: string) {
+    const user = await this.usersService.findById(userId);
+    if (!user) {
+      throw new UnauthorizedException();
+    }
+
+    return {
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      phone: user.phone,
+      preferredCurrency: user.preferredCurrency,
+      mustChangePassword: user.mustChangePassword,
+    };
+  }
   private async generateTokens(user: UserDocument) {
   const payload = {
     sub: user._id.toString(),
@@ -256,5 +269,105 @@ async refresh(refreshToken: string) {
   const tokens = await this.generateTokens(user);
 
   return tokens;
+}
+
+async changePassword(
+  userId: string,
+  dto: ChangePasswordDto,
+) {
+  if (dto.currentPassword === dto.newPassword) {
+    throw new BadRequestException(
+      'New password must differ from current password',
+    );
+  }
+
+  const user = await this.usersService.findByIdWithPassword(userId);
+
+  if (!user) {
+    throw new UnauthorizedException();
+  }
+
+  const currentPasswordMatches = await bcrypt.compare(
+    dto.currentPassword,
+    user.password,
+  );
+
+  if (!currentPasswordMatches) {
+    throw new UnauthorizedException('Current password is incorrect');
+  }
+
+  const hashedPassword = await bcrypt.hash(
+    dto.newPassword,
+    12,
+  );
+
+  await this.usersService.updatePassword(userId, {
+    password: hashedPassword,
+    mustChangePassword: false,
+    refreshTokenHash: null,
+  });
+
+  return {
+    message: 'Password changed successfully. Please log in again.',
+  };
+}
+async updateProfile(
+  userId: string,
+  dto: UpdateProfileDto,
+) {
+  if (!dto.name && !dto.phone && !dto.preferredCurrency) {
+    throw new BadRequestException('At least one profile field must be provided');
+  }
+
+  const user = await this.usersService.updateProfile(
+    userId,
+    dto,
+  );
+
+  if (!user) {
+    throw new NotFoundException('Account not found');
+  }
+
+  if (user.role === UserRole.ADMINISTRATOR || user.role === UserRole.GUEST) {
+    throw new BadRequestException('Only registered users and moderators can be reset');
+  }
+
+  return {
+    message: 'Profile updated successfully',
+    user: {
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      preferredCurrency: user.preferredCurrency,
+      role: user.role,
+    },
+  };
+}
+//admin
+async adminResetPassword(
+  userId: string,
+  temporaryPassword: string,
+) {
+  const user = await this.usersService.findById(userId);
+
+  if (!user) {
+    throw new NotFoundException('Account not found');
+  }
+
+  const hashedPassword = await bcrypt.hash(
+    temporaryPassword,
+    12,
+  );
+
+  await this.usersService.updatePassword(userId, {
+    password: hashedPassword,
+    mustChangePassword: true,
+    refreshTokenHash: null,
+  });
+
+  return {
+    message: 'Password reset successfully. User must change password at next login.',
+  };
 }
 }
