@@ -1,68 +1,57 @@
 import {
   Controller,
-  Post,
-  Param,
-  Body,
+  Get,
   UseGuards,
 } from '@nestjs/common';
 
 import {
-  ApiOperation,
-  ApiOkResponse,
-  ApiBadRequestResponse,
-  ApiNotFoundResponse,
-  ApiUnauthorizedResponse,
+  ApiBearerAuth,
   ApiForbiddenResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-
-import { AuthService } from '../../auth/auth.service';
-import { AdminResetPasswordDto } from '../../auth/dtos/admin-reset-password.dto';
 
 import { JwtAuthGuard } from '../../common/guards/jwt-auth/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles/roles.guard';
+
 import { Roles } from '../../common/decorators/roles/roles.decorator';
+import { CurrentUser } from '../../common/decorators/current-user/current-user.decorator';
+
 import { UserRole } from '../../users/users-role.enum';
+import type { AuthenticatedUser } from '../../common/interfaces/authenticated-user.interface';
 
-
-@Controller('admin/accounts')
+@ApiTags('Administration')
+@ApiBearerAuth()
+@Controller('admin')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(UserRole.ADMINISTRATOR)
 export class AdminController {
-  constructor(
-    private readonly authService: AuthService,
-  ) {}
 
-  @Post(':userId/reset-password')
+  @Get('dashboard')
+  @Roles(UserRole.ADMINISTRATOR)
   @ApiOperation({
-    summary: 'Reset a user or moderator password',
+    summary: 'Access the administrator dashboard',
   })
   @ApiOkResponse({
-    description: 'Password reset successfully',
-    schema: {
-      example: {
-        message: 'Password reset successfully. User must change password at next login.',
-      },
-    },
-  })
-  @ApiBadRequestResponse({
-    description: 'Temporary password does not meet password rules',
+    description: 'Administrator access granted',
   })
   @ApiUnauthorizedResponse({
-    description: 'Authentication required',
+    description: 'User is not authenticated',
   })
   @ApiForbiddenResponse({
-    description: 'Only administrators can reset passwords',
+    description: 'User does not have administrator privileges',
   })
-  @ApiNotFoundResponse({
-    description: 'Account not found',
-  })
-  async resetPassword(
-    @Param('userId') userId: string,
-    @Body() dto: AdminResetPasswordDto,
+  getDashboard(
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.authService.adminResetPassword(
-      userId,
-      dto.temporaryPassword,
-    );
+    return {
+      message: 'Welcome to the admin dashboard',
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+      },
+    };
   }
 }

@@ -1,3 +1,19 @@
-import { Reflector } from '@nestjs/core';
+import {
+  createParamDecorator,
+  ExecutionContext,
+} from '@nestjs/common';
 
-export const CurrentUser = Reflector.createDecorator<string[]>();
+import { AuthenticatedUser } from '../../interfaces/authenticated-user.interface';
+
+export const CurrentUser = createParamDecorator(
+  (
+    data: keyof AuthenticatedUser | undefined,
+    context: ExecutionContext,
+  ) => {
+    const request = context.switchToHttp().getRequest();
+
+    const user = request.user as AuthenticatedUser;
+
+    return data ? user?.[data] : user;
+  },
+);
