@@ -15,7 +15,6 @@ import { UsersService } from '../users/users.service';
 import { LoginDto } from './dtos/login.dto';
 import { RegisterDto } from './dtos/register.dto';
 import { UserRole } from '../users/users-role.enum';
-import { randomBytes } from 'crypto';
 import { randomUUID } from 'crypto';
 import { UpdateProfileDto } from './dtos/update-profile.dto';
 import { ChangePasswordDto } from './dtos/change-password.dto';
@@ -98,17 +97,11 @@ export class AuthService {
     user.lockUntil = null;
     user.lastActivityAt = new Date();
     await user.save();
-
-    const payload = {
-      sub: user._id.toString(),
-      email: user.email,
-      role: user.role,
-    };
-
-    const accessToken = await this.jwtService.signAsync(payload);
+    const { accessToken, refreshToken } = await this.generateTokens(user);
 
     return {
       accessToken,
+      refreshToken,
       user: {
         id: user._id.toString(),
         name: user.name,
@@ -265,6 +258,12 @@ async changePassword(
   userId: string,
   dto: ChangePasswordDto,
 ) {
+  if (dto.currentPassword === dto.newPassword) {
+    throw new BadRequestException(
+      'New password must differ from current password',
+    );
+  }
+
   const user = await this.usersService.findByIdWithPassword(userId);
 
   if (!user) {
@@ -278,12 +277,6 @@ async changePassword(
 
   if (!currentPasswordMatches) {
     throw new UnauthorizedException('Current password is incorrect');
-  }
-
-  if (dto.currentPassword === dto.newPassword) {
-    throw new BadRequestException(
-      'New password must differ from current password',
-    );
   }
 
   const hashedPassword = await bcrypt.hash(
@@ -305,6 +298,10 @@ async updateProfile(
   userId: string,
   dto: UpdateProfileDto,
 ) {
+  if (!dto.name && !dto.phone && !dto.preferredCurrency) {
+    throw new BadRequestException('At least one profile field must be provided');
+  }
+
   const user = await this.usersService.updateProfile(
     userId,
     dto,
@@ -312,6 +309,10 @@ async updateProfile(
 
   if (!user) {
     throw new NotFoundException('Account not found');
+  }
+
+  if (user.role === UserRole.ADMINISTRATOR || user.role === UserRole.GUEST) {
+    throw new BadRequestException('Only registered users and moderators can be reset');
   }
 
   return {

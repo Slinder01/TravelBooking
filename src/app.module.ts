@@ -3,7 +3,6 @@ import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
-import { AdminController } from './admin/admin/admin.controller';
 import { AdminModule } from './admin/admin/admin.module';
 import { CommonModule } from './common/common.module';
 
@@ -26,6 +25,5 @@ import { CommonModule } from './common/common.module';
     
     CommonModule,
   ],
-  controllers: [AdminController],
 })
 export class AppModule {}

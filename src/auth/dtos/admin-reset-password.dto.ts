@@ -5,6 +5,7 @@ import {
 } from 'class-validator';
 
 export class AdminResetPasswordDto {
+  @ApiProperty({ example: 'Temporary123', minLength: 8 })
   @IsString()
   @MinLength(8)
   @Matches(/^(?=.*[A-Za-z])(?=.*\d).+$/, {
@@ -12,3 +13,4 @@ export class AdminResetPasswordDto {
   })
   temporaryPassword: string;
 }
+import { ApiProperty } from '@nestjs/swagger';
