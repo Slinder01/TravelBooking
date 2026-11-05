@@ -61,6 +61,14 @@ export class User {
 
   @Prop({ type: Types.ObjectId, ref: 'Hotel' })
   hotelId?: Types.ObjectId;
+
+ @Prop({ type: String, default: null, select: false })
+refreshTokenHash: string | null;
+
+ 
+
+@Prop({ type: Date, default: null })
+lastActivityAt: Date | null;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
