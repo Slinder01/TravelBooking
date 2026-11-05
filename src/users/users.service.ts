@@ -64,4 +64,25 @@ async findByIdWithPassword(id: string) {
     .select('+password')
     .exec();
 }
+
+async updateProfile(
+  id: string,
+  updates: {
+    name?: string;
+    phone?: string;
+    preferredCurrency?: string;
+  },
+) {
+  return this.userModel
+    .findByIdAndUpdate(
+      id,
+      { $set: updates },
+      {
+        new: true,
+        runValidators: true,
+      },
+    )
+    .select('-password -refreshTokenHash')
+    .exec();
+}
 }

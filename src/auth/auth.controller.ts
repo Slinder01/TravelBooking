@@ -4,6 +4,7 @@ import {
   Post,
   Req,
   Res,
+  Patch,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import {
@@ -21,6 +22,7 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dtos/login.dto';
 import { RegisterDto } from './dtos/register.dto';
 import { ChangePasswordDto } from './dtos/change-password.dto';
+import { UpdateProfileDto } from './dtos/update-profile.dto';
 
 @Controller('auth')
 @ApiTags('Authentication')
@@ -139,6 +141,36 @@ async changePassword(
   @Body() dto: ChangePasswordDto,
 ) {
   return this.authService.changePassword(
+    request.user.id,
+    dto,
+  );
+}
+@Patch('profile')
+@UseGuards(JwtAuthGuard)
+@ApiOperation({ summary: 'Update the current user profile' })
+@ApiOkResponse({
+  description: 'Profile updated successfully',
+  schema: {
+    example: {
+      message: 'Profile updated successfully',
+      user: {
+        id: '665f1a2b3c4d5e6f78901234',
+        name: 'Alex Morgan',
+        email: 'alex@example.com',
+        phone: '+201001234567',
+        preferredCurrency: 'EGP',
+        role: 'REGISTERED_USER',
+      },
+    },
+  },
+})
+@ApiBadRequestResponse({ description: 'Invalid profile data' })
+@ApiUnauthorizedResponse({ description: 'Authentication required' })
+async updateProfile(
+  @Req() request: Request & { user: { id: string } },
+  @Body() dto: UpdateProfileDto,
+) {
+  return this.authService.updateProfile(
     request.user.id,
     dto,
   );

@@ -17,6 +17,8 @@ import { RegisterDto } from './dtos/register.dto';
 import { UserRole } from '../users/users-role.enum';
 import { randomBytes } from 'crypto';
 import { randomUUID } from 'crypto';
+import { UpdateProfileDto } from './dtos/update-profile.dto';
+import { ChangePasswordDto } from './dtos/change-password.dto';
 import { UserDocument } from '../users/schemas/user.schema';
 // import { error } from 'console';
 
@@ -259,6 +261,71 @@ async refresh(refreshToken: string) {
   return tokens;
 }
 
+async changePassword(
+  userId: string,
+  dto: ChangePasswordDto,
+) {
+  const user = await this.usersService.findByIdWithPassword(userId);
+
+  if (!user) {
+    throw new UnauthorizedException();
+  }
+
+  const currentPasswordMatches = await bcrypt.compare(
+    dto.currentPassword,
+    user.password,
+  );
+
+  if (!currentPasswordMatches) {
+    throw new UnauthorizedException('Current password is incorrect');
+  }
+
+  if (dto.currentPassword === dto.newPassword) {
+    throw new BadRequestException(
+      'New password must differ from current password',
+    );
+  }
+
+  const hashedPassword = await bcrypt.hash(
+    dto.newPassword,
+    12,
+  );
+
+  await this.usersService.updatePassword(userId, {
+    password: hashedPassword,
+    mustChangePassword: false,
+    refreshTokenHash: null,
+  });
+
+  return {
+    message: 'Password changed successfully. Please log in again.',
+  };
+}
+async updateProfile(
+  userId: string,
+  dto: UpdateProfileDto,
+) {
+  const user = await this.usersService.updateProfile(
+    userId,
+    dto,
+  );
+
+  if (!user) {
+    throw new NotFoundException('Account not found');
+  }
+
+  return {
+    message: 'Profile updated successfully',
+    user: {
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      preferredCurrency: user.preferredCurrency,
+      role: user.role,
+    },
+  };
+}
 //admin
 async adminResetPassword(
   userId: string,
