@@ -3,6 +3,7 @@ import {
   Controller,
   HttpCode,
   HttpStatus,
+  Get,
   Patch,
   Post,
   Req,
@@ -12,6 +13,7 @@ import {
 import type { Request, Response } from 'express';
 import {
   ApiBadRequestResponse,
+  ApiCookieAuth,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiForbiddenResponse,
@@ -77,7 +79,19 @@ export class AuthController {
     };
   }
 
+  @Get('me')
+  @ApiCookieAuth('access_token')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({ summary: 'Get the current authenticated account' })
+  @ApiOkResponse({ description: 'Current account profile' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required or session expired' })
+  getCurrentUser(@Req() request: Request & { user: { id: string } }) {
+    return this.authService.getCurrentUser(request.user.id);
+  }
+
   @Post('logout')
+  @ApiCookieAuth('access_token')
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Log out and revoke the refresh session' })
@@ -106,7 +120,8 @@ export class AuthController {
     return { message: 'Session refreshed' };
   }
 
-  @Post('change-password')
+  @Patch('change-password')
+  @ApiCookieAuth('access_token')
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Change the current user password' })
@@ -124,6 +139,7 @@ export class AuthController {
   }
 
   @Patch('profile')
+  @ApiCookieAuth('access_token')
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Update the current user profile' })
@@ -140,7 +156,7 @@ export class AuthController {
   private setAuthCookies(response: Response, accessToken: string, refreshToken: string) {
     const sharedOptions = {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: process.env.NODE_ENV !== 'development',
       sameSite: 'lax' as const,
     };
 
@@ -159,7 +175,7 @@ export class AuthController {
   private clearAuthCookies(response: Response) {
     const sharedOptions = {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: process.env.NODE_ENV !== 'development',
       sameSite: 'lax' as const,
     };
 

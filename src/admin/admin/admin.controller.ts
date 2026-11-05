@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 
 import {
-  ApiBearerAuth,
+  ApiCookieAuth,
   ApiForbiddenResponse,
   ApiOkResponse,
   ApiOperation,
@@ -33,7 +33,7 @@ import { AdminResetPasswordDto } from '../../auth/dtos/admin-reset-password.dto'
 import { ListAccountsQueryDto } from './dtos/list-accounts-query.dto';
 
 @ApiTags('Administration')
-@ApiBearerAuth()
+@ApiCookieAuth('access_token')
 @Controller('admin')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class AdminController {
@@ -69,7 +69,7 @@ export class AdminController {
     };
   }
 
-  @Get('users')
+  @Get(['users', 'accounts'])
   @Roles(UserRole.ADMINISTRATOR)
   @ApiOperation({ summary: 'List, search, and filter accounts' })
   @ApiOkResponse({ description: 'Paginated account list' })

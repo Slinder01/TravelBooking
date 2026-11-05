@@ -176,6 +176,23 @@ export class AuthService {
 
   return { message: 'Logged out successfully' };
 }
+
+  async getCurrentUser(userId: string) {
+    const user = await this.usersService.findById(userId);
+    if (!user) {
+      throw new UnauthorizedException();
+    }
+
+    return {
+      id: user._id.toString(),
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      phone: user.phone,
+      preferredCurrency: user.preferredCurrency,
+      mustChangePassword: user.mustChangePassword,
+    };
+  }
   private async generateTokens(user: UserDocument) {
   const payload = {
     sub: user._id.toString(),

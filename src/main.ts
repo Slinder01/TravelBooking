@@ -15,7 +15,11 @@ async function bootstrap() {
     .setTitle('Travel Booking API') // Change to your project title
     .setDescription('The backend API documentation for travel booking')
     .setVersion('1.0')
-    .addBearerAuth() // Optional: Enables JWT Bearer token authorization button in UI
+    .addCookieAuth('access_token', {
+      type: 'apiKey',
+      in: 'cookie',
+      name: 'access_token',
+    }, 'access_token')
     .build();
 
   // 2. Create the document factory / document
