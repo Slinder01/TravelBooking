@@ -1,0 +1,21 @@
+================================================
+Date: 2026-11-07
+Student: Team Member (sowerinchampion)
+Tool: Antigravity (Gemini)
+Related Requirement: FLT-01, FLT-03, FLT-04, FLT-08, FLT-09, FLT-11
+Prompt:
+How should the Airline and Airport domain entities be structured in NestJS and MongoDB, including baggage/cancellation policies and role-based ownership checks for Airline Moderators?
+How the output was used:
+Designed the Airline schema with embedded BaggagePolicy and CancellationPolicy subdocuments (composition over separate collections) and implemented the Airports module with IATA code normalization, OpenAPI documentation, and strict role ownership checks restricting airline moderators to their assigned airlineId.
+================================================
+
+================================================
+Date: 2026-11-07
+Student: Team Member (sowerinchampion)
+Tool: Antigravity (Gemini)
+Related Requirement: FLT-03, FLT-04, FLT-11
+Prompt:
+Design and implement the Flight schema and flight creation endpoint (FLT-03) with 4 cabin classes (Economy, Premium Economy, Business, First), local-to-UTC timezone conversions based on airport IANA zones, duplicate flight prevention using local departure date, and airline moderator ownership checks.
+How the output was used:
+Implemented Flight schema with embedded CabinInventory subdocuments, timezone conversion utility with Intl.DateTimeFormat, DTOs with class-validator, FlightsService with business validations and moderator authorization, FlightsController with Swagger annotations, and comprehensive unit tests.
+================================================
