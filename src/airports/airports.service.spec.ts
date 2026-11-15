@@ -81,4 +81,15 @@ describe('AirportsService', () => {
 
     await expect(service.findByIataCode('XYZ')).rejects.toThrow(NotFoundException);
   });
+
+  it('should safely handle special regex characters in search without crashing', async () => {
+    mockAirportModel.find.mockReturnValue({
+      sort: jest.fn().mockReturnValue({
+        exec: jest.fn().mockResolvedValue([]),
+      }),
+    });
+
+    const result = await service.findAll('(');
+    expect(result).toEqual([]);
+  });
 });

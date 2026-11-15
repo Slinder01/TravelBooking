@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -20,6 +21,7 @@ import {
 } from '@nestjs/swagger';
 import { FlightsService } from './flights.service';
 import { CreateFlightDto } from './dtos/create-flight.dto';
+import { SearchFlightsDto } from './dtos/search-flights.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles/roles.guard';
 import { Roles } from '../common/decorators/roles/roles.decorator';
@@ -58,6 +60,22 @@ export class FlightsController {
     @CurrentUser() currentUser: AuthenticatedUser,
   ) {
     return this.flightsService.create(dto, currentUser);
+  }
+
+  @Get('search')
+  @ApiOperation({
+    summary: 'Search scheduled flights (FLT-11, FLT-12, FLT-15)',
+    description:
+      'Public endpoint to search available scheduled flights by route, local date, and passenger count. Automatically chooses the cheapest eligible cabin when cabinClass is omitted.',
+  })
+  @ApiOkResponse({
+    description: 'Matching flights sorted by price, duration, or departure time',
+  })
+  @ApiBadRequestResponse({
+    description: 'Invalid search parameters (e.g., identical origin and destination, invalid date)',
+  })
+  search(@Query() query: SearchFlightsDto) {
+    return this.flightsService.search(query);
   }
 
   @Get(':id')

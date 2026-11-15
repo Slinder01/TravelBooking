@@ -116,5 +116,21 @@ describe('AirlinesService', () => {
         service.update(validId, { name: 'Hack Name' }, mockOtherModeratorUser),
       ).rejects.toThrow(ForbiddenException);
     });
+
+    it('should forbid AIRLINE_MODERATOR from updating isActive or iataCode', async () => {
+      await expect(
+        service.update(validId, { isActive: false }, mockModeratorUser),
+      ).rejects.toThrow(ForbiddenException);
+
+      await expect(
+        service.update(validId, { iataCode: 'XX' }, mockModeratorUser),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('should allow ADMINISTRATOR to update isActive or iataCode', async () => {
+      mockAirlineModel.findOne.mockResolvedValue(null);
+      const result = await service.update(validId, { isActive: false, iataCode: 'M2' }, mockAdminUser);
+      expect(result).toBeDefined();
+    });
   });
 });

@@ -9,11 +9,16 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, isValidObjectId } from 'mongoose';
 import { Flight, FlightDocument, FlightStatus } from './schemas/flight.schema';
 import { CreateFlightDto } from './dtos/create-flight.dto';
+import { SearchFlightsDto, FlightSortBy } from './dtos/search-flights.dto';
 import { AirlinesService } from '../airlines/airlines.service';
 import { AirportsService } from '../airports/airports.service';
 import { UserRole } from '../users/users-role.enum';
 import type { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
-import { extractLocalDate, localToUtc } from './utils/timezone.util';
+import {
+  extractLocalDate,
+  isValidCalendarDate,
+  localToUtc,
+} from './utils/timezone.util';
 
 @Injectable()
 export class FlightsService {
@@ -121,6 +126,116 @@ export class FlightsService {
     });
 
     return flight.save();
+  }
+
+  async search(query: SearchFlightsDto) {
+    const origin = query.origin.trim().toUpperCase();
+    const destination = query.destination.trim().toUpperCase();
+
+    if (origin === destination) {
+      throw new BadRequestException('Origin and destination airports cannot be identical');
+    }
+
+    if (!isValidCalendarDate(query.departureDate)) {
+      throw new BadRequestException(
+        `Invalid calendar date: '${query.departureDate}'. Impossible dates (such as February 30) are not permitted.`,
+      );
+    }
+
+    const passengers = query.passengers && query.passengers > 0 ? query.passengers : 1;
+
+    // Filter by route, local departure date, and Scheduled status (FLT-11)
+    const filter: Record<string, any> = {
+      departureAirportIata: origin,
+      arrivalAirportIata: destination,
+      departureDateLocal: query.departureDate,
+      status: FlightStatus.SCHEDULED,
+    };
+
+    const flights = await this.flightModel
+      .find(filter)
+      .populate('airlineId', 'name iataCode logoUrl baggagePolicy cancellationPolicy')
+      .exec();
+
+    const results = [];
+    const now = Date.now();
+
+    for (const flight of flights) {
+      // Exclude flights that have already departed (even if on today's calendar date)
+      if (flight.departureTimeUtc.getTime() <= now) {
+        continue;
+      }
+
+      // Find qualifying cabins for the requested passenger count
+      const qualifyingCabins = flight.cabins
+        .map((cabin) => {
+          const availableSeats =
+            cabin.seatCount - (cabin.bookedSeats || 0) - (cabin.heldSeats || 0);
+          return {
+            cabinClass: cabin.cabinClass,
+            seatCount: cabin.seatCount,
+            availableSeats,
+            price: cabin.price,
+            totalPrice: Math.round(cabin.price * passengers * 100) / 100,
+            freeBaggageBags: cabin.freeBaggageBags,
+            baggageMaxWeightKg: cabin.baggageMaxWeightKg,
+          };
+        })
+        .filter((c) => {
+          if (c.availableSeats < passengers) {
+            return false;
+          }
+          if (query.cabinClass) {
+            return c.cabinClass === query.cabinClass;
+          }
+          return true;
+        })
+        .sort((a, b) => a.price - b.price); // Cheapest first
+
+      if (qualifyingCabins.length === 0) {
+        continue;
+      }
+
+      // When cabinClass is omitted, use the cheapest cabin with sufficient available seats
+      const selectedCabin = qualifyingCabins[0];
+      const durationMinutes = Math.round(
+        (flight.arrivalTimeUtc.getTime() - flight.departureTimeUtc.getTime()) / (1000 * 60),
+      );
+
+      results.push({
+        id: flight._id.toString(),
+        flightNumber: flight.flightNumber,
+        airline: flight.airlineId,
+        departureAirportIata: flight.departureAirportIata,
+        arrivalAirportIata: flight.arrivalAirportIata,
+        departureTimeLocal: flight.departureTimeLocal,
+        arrivalTimeLocal: flight.arrivalTimeLocal,
+        departureTimeUtc: flight.departureTimeUtc,
+        arrivalTimeUtc: flight.arrivalTimeUtc,
+        departureDateLocal: flight.departureDateLocal,
+        durationMinutes,
+        selectedCabin: {
+          cabinClass: selectedCabin.cabinClass,
+          pricePerPassenger: selectedCabin.price,
+          totalPrice: selectedCabin.totalPrice,
+          availableSeats: selectedCabin.availableSeats,
+          freeBaggageBags: selectedCabin.freeBaggageBags,
+          baggageMaxWeightKg: selectedCabin.baggageMaxWeightKg,
+        },
+        availableCabins: qualifyingCabins,
+      });
+    }
+
+    // Apply sorting (FLT-15)
+    if (query.sortBy === FlightSortBy.DURATION) {
+      results.sort((a, b) => a.durationMinutes - b.durationMinutes);
+    } else if (query.sortBy === FlightSortBy.DEPARTURE_TIME) {
+      results.sort((a, b) => a.departureTimeUtc.getTime() - b.departureTimeUtc.getTime());
+    } else {
+      results.sort((a, b) => a.selectedCabin.totalPrice - b.selectedCabin.totalPrice);
+    }
+
+    return results;
   }
 
   async findById(id: string): Promise<FlightDocument> {

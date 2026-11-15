@@ -37,6 +37,11 @@ export class UpdateAirlineDto {
   @IsUrl()
   website?: string;
 
+  @ApiPropertyOptional({ example: 'https://example.com/logo.png', description: 'Logo image URL' })
+  @IsOptional()
+  @IsUrl()
+  logoUrl?: string;
+
   @ApiPropertyOptional({ example: true, description: 'Whether the airline is active' })
   @IsOptional()
   @IsBoolean()

@@ -45,8 +45,8 @@ export class CreateFlightDto {
     description: 'Departure date-time in departure airport local time (YYYY-MM-DDTHH:mm:ss)',
   })
   @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/, {
-    message: 'departureTimeLocal must be in YYYY-MM-DDTHH:mm:ss format',
+  @Matches(/^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/, {
+    message: 'departureTimeLocal must be in YYYY-MM-DDTHH:mm:ss format with valid 24-hour time (00:00 to 23:59)',
   })
   departureTimeLocal: string;
 
@@ -55,8 +55,8 @@ export class CreateFlightDto {
     description: 'Arrival date-time in arrival airport local time (YYYY-MM-DDTHH:mm:ss)',
   })
   @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/, {
-    message: 'arrivalTimeLocal must be in YYYY-MM-DDTHH:mm:ss format',
+  @Matches(/^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/, {
+    message: 'arrivalTimeLocal must be in YYYY-MM-DDTHH:mm:ss format with valid 24-hour time (00:00 to 23:59)',
   })
   arrivalTimeLocal: string;
 

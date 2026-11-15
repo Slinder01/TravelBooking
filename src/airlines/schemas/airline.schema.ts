@@ -53,6 +53,9 @@ export class Airline {
   @Prop({ trim: true, default: null })
   website?: string;
 
+  @Prop({ trim: true, default: null })
+  logoUrl?: string;
+
   @Prop({ type: BaggagePolicySchema, default: () => ({}) })
   baggagePolicy: BaggagePolicy;
 

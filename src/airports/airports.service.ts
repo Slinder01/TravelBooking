@@ -34,7 +34,9 @@ export class AirportsService {
   async findAll(search?: string): Promise<AirportDocument[]> {
     if (search && search.trim()) {
       const term = search.trim();
-      const regex = new RegExp(term, 'i');
+      // Escape regular expression special characters to prevent ReDoS or syntax crashes
+      const sanitized = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(sanitized, 'i');
       return this.airportModel
         .find({
           $or: [{ iataCode: regex }, { name: regex }, { city: regex }, { country: regex }],
@@ -64,14 +66,15 @@ export class AirportsService {
     }
 
     const defaultAirports: CreateAirportDto[] = [
-      { iataCode: 'CAI', name: 'Cairo International Airport', city: 'Cairo', country: 'Egypt', timeZone: 'Africa/Cairo' },
-      { iataCode: 'BER', name: 'Berlin Brandenburg Airport', city: 'Berlin', country: 'Germany', timeZone: 'Europe/Berlin' },
-      { iataCode: 'DXB', name: 'Dubai International Airport', city: 'Dubai', country: 'United Arab Emirates', timeZone: 'Asia/Dubai' },
-      { iataCode: 'LHR', name: 'London Heathrow Airport', city: 'London', country: 'United Kingdom', timeZone: 'Europe/London' },
-      { iataCode: 'JFK', name: 'John F. Kennedy International Airport', city: 'New York', country: 'United States', timeZone: 'America/New_York' },
-      { iataCode: 'CDG', name: 'Charles de Gaulle Airport', city: 'Paris', country: 'France', timeZone: 'Europe/Paris' },
-      { iataCode: 'HND', name: 'Tokyo Haneda Airport', city: 'Tokyo', country: 'Japan', timeZone: 'Asia/Tokyo' },
-      { iataCode: 'IST', name: 'Istanbul Airport', city: 'Istanbul', country: 'Turkey', timeZone: 'Europe/Istanbul' },
+      { iataCode: 'CAI', name: 'Cairo International Airport', city: 'Cairo', cityId: 'cai', country: 'Egypt', countryCode: 'EG', timeZone: 'Africa/Cairo' },
+      { iataCode: 'DXB', name: 'Dubai International Airport', city: 'Dubai', cityId: 'dxb', country: 'United Arab Emirates', countryCode: 'AE', timeZone: 'Asia/Dubai' },
+      { iataCode: 'LHR', name: 'London Heathrow Airport', city: 'London', cityId: 'lon', country: 'United Kingdom', countryCode: 'GB', timeZone: 'Europe/London' },
+      { iataCode: 'JFK', name: 'John F. Kennedy International Airport', city: 'New York', cityId: 'nyc', country: 'United States', countryCode: 'US', timeZone: 'America/New_York' },
+      { iataCode: 'CDG', name: 'Charles de Gaulle Airport', city: 'Paris', cityId: 'par', country: 'France', countryCode: 'FR', timeZone: 'Europe/Paris' },
+      { iataCode: 'HND', name: 'Tokyo Haneda Airport', city: 'Tokyo', cityId: 'tyo', country: 'Japan', countryCode: 'JP', timeZone: 'Asia/Tokyo' },
+      { iataCode: 'RUH', name: 'King Khalid International Airport', city: 'Riyadh', cityId: 'ruh', country: 'Saudi Arabia', countryCode: 'SA', timeZone: 'Asia/Riyadh' },
+      { iataCode: 'FRA', name: 'Frankfurt Airport', city: 'Frankfurt', cityId: 'fra', country: 'Germany', countryCode: 'DE', timeZone: 'Europe/Berlin' },
+      { iataCode: 'BER', name: 'Berlin Brandenburg Airport', city: 'Berlin', cityId: 'ber', country: 'Germany', countryCode: 'DE', timeZone: 'Europe/Berlin' },
     ];
 
     await this.airportModel.insertMany(defaultAirports);

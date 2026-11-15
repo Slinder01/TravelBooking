@@ -2,7 +2,7 @@
 Date: 2026-11-07
 Student: Team Member (sowerinchampion)
 Tool: Antigravity (Gemini)
-Related Requirement: FLT-01, FLT-03, FLT-04, FLT-08, FLT-09, FLT-11
+Related Requirement: FLT-01, FLT-08, FLT-09
 Prompt:
 How should the Airline and Airport domain entities be structured in NestJS and MongoDB, including baggage/cancellation policies and role-based ownership checks for Airline Moderators?
 How the output was used:
@@ -13,9 +13,20 @@ Designed the Airline schema with embedded BaggagePolicy and CancellationPolicy s
 Date: 2026-11-07
 Student: Team Member (sowerinchampion)
 Tool: Antigravity (Gemini)
-Related Requirement: FLT-03, FLT-04, FLT-11
+Related Requirement: FLT-03, FLT-04
 Prompt:
 Design and implement the Flight schema and flight creation endpoint (FLT-03) with 4 cabin classes (Economy, Premium Economy, Business, First), local-to-UTC timezone conversions based on airport IANA zones, duplicate flight prevention using local departure date, and airline moderator ownership checks.
 How the output was used:
 Implemented Flight schema with embedded CabinInventory subdocuments, timezone conversion utility with Intl.DateTimeFormat, DTOs with class-validator, FlightsService with business validations and moderator authorization, FlightsController with Swagger annotations, and comprehensive unit tests.
+================================================
+
+================================================
+Date: 2026-11-08
+Student: Team Member (sowerinchampion)
+Tool: Antigravity (Gemini)
+Related Requirement: FLT-11, FLT-15
+Prompt:
+Design and implement the public one-way flight search endpoint (GET /api/flights/search) using exact Flight schema fields (departureAirportIata, arrivalAirportIata, departureDateLocal), filtering for Scheduled status, computing seat availability per cabin, picking the cheapest eligible cabin when cabinClass is omitted, calculating flight duration, and providing sorting options.
+How the output was used:
+Created SearchFlightsDto with class-validator decorators, implemented FlightsService.search() with in-memory cabin qualification and duration/price calculations, exposed a public GET /api/flights/search endpoint in FlightsController, and verified with automated unit tests.
 ================================================

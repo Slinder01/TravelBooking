@@ -64,6 +64,15 @@ export class AirlinesService {
     this.validateObjectId(id);
     this.assertModeratorOwnership(id, currentUser);
 
+    // Security invariant: only Administrators can alter global IATA codes or toggle active status
+    if (dto.iataCode !== undefined || dto.isActive !== undefined) {
+      if (currentUser.role !== UserRole.ADMINISTRATOR) {
+        throw new ForbiddenException(
+          "Only administrators are authorized to modify an airline's IATA code or active status",
+        );
+      }
+    }
+
     const airline = await this.findById(id);
 
     if (dto.iataCode && dto.iataCode.toUpperCase() !== airline.iataCode) {
@@ -83,6 +92,7 @@ export class AirlinesService {
     if (dto.country !== undefined) airline.country = dto.country;
     if (dto.contactEmail !== undefined) airline.contactEmail = dto.contactEmail;
     if (dto.website !== undefined) airline.website = dto.website;
+    if (dto.logoUrl !== undefined) airline.logoUrl = dto.logoUrl;
     if (dto.isActive !== undefined) airline.isActive = dto.isActive;
 
     return airline.save();

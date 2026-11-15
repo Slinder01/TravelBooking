@@ -13,6 +13,7 @@ import { AirportsService } from '../airports/airports.service';
 import { UserRole } from '../users/users-role.enum';
 import type { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { CreateFlightDto } from './dtos/create-flight.dto';
+import { FlightSortBy, SearchFlightsDto } from './dtos/search-flights.dto';
 
 describe('FlightsService', () => {
   let service: FlightsService;
@@ -92,6 +93,7 @@ describe('FlightsService', () => {
     }));
     mockFlightModel.findOne = jest.fn();
     mockFlightModel.findById = jest.fn();
+    mockFlightModel.find = jest.fn();
 
     mockAirlinesService = {
       findById: jest.fn().mockResolvedValue(mockAirline),
@@ -247,6 +249,239 @@ describe('FlightsService', () => {
       await expect(service.create(unauthorizedDto, mockModeratorUser)).rejects.toThrow(
         ForbiddenException,
       );
+    });
+
+    it('should reject flight scheduling with impossible calendar date (e.g. Feb 30)', async () => {
+      const impossibleDateDto: CreateFlightDto = {
+        ...sampleValidDto,
+        departureTimeLocal: '2026-02-30T10:00:00',
+        arrivalTimeLocal: '2026-02-30T14:00:00',
+      };
+
+      await expect(service.create(impossibleDateDto, mockModeratorUser)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('should reject flight scheduling with invalid clock times (e.g. 25:00:00)', async () => {
+      const invalidTimeDto: CreateFlightDto = {
+        ...sampleValidDto,
+        departureTimeLocal: '2026-12-01T25:00:00',
+        arrivalTimeLocal: '2026-12-01T28:00:00',
+      };
+
+      await expect(service.create(invalidTimeDto, mockModeratorUser)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
+  describe('search - public flight search (FLT-11, FLT-12, FLT-15)', () => {
+    const mockFlightDoc = {
+      _id: new Types.ObjectId('665f1a2b3c4d5e6f78905555'),
+      flightNumber: 'MS777',
+      airlineId: {
+        _id: new Types.ObjectId(validAirlineId),
+        name: 'EgyptAir',
+        iataCode: 'MS',
+        logoUrl: 'https://example.com/logo.png',
+      },
+      departureAirportIata: 'CAI',
+      arrivalAirportIata: 'BER',
+      departureDateLocal: '2026-12-01',
+      departureTimeLocal: '2026-12-01T14:30:00',
+      arrivalTimeLocal: '2026-12-01T18:45:00',
+      departureTimeUtc: new Date('2026-12-01T12:30:00.000Z'),
+      arrivalTimeUtc: new Date('2026-12-01T17:45:00.000Z'),
+      status: FlightStatus.SCHEDULED,
+      cabins: [
+        {
+          cabinClass: CabinClass.ECONOMY,
+          seatCount: 150,
+          bookedSeats: 10,
+          heldSeats: 0,
+          price: 250,
+          freeBaggageBags: 1,
+          baggageMaxWeightKg: 23,
+        },
+        {
+          cabinClass: CabinClass.BUSINESS,
+          seatCount: 20,
+          bookedSeats: 5,
+          heldSeats: 0,
+          price: 800,
+          freeBaggageBags: 2,
+          baggageMaxWeightKg: 32,
+        },
+      ],
+    };
+
+    it('should search one-way flights and choose cheapest eligible cabin when cabinClass is omitted', async () => {
+      mockFlightModel.find.mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue([mockFlightDoc]),
+        }),
+      });
+
+      const query: SearchFlightsDto = {
+        origin: 'CAI',
+        destination: 'BER',
+        departureDate: '2026-12-01',
+        passengers: 2,
+      };
+
+      const results = await service.search(query);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].flightNumber).toBe('MS777');
+      expect(results[0].durationMinutes).toBe(315); // 5h 15m = 315 min
+      // Cheapest cabin is Economy (250)
+      expect(results[0].selectedCabin.cabinClass).toBe(CabinClass.ECONOMY);
+      expect(results[0].selectedCabin.pricePerPassenger).toBe(250);
+      expect(results[0].selectedCabin.totalPrice).toBe(500); // 2 * 250
+      expect(results[0].selectedCabin.availableSeats).toBe(140); // 150 - 10
+      expect(results[0].availableCabins).toHaveLength(2);
+    });
+
+    it('should filter by specific cabinClass when provided', async () => {
+      mockFlightModel.find.mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue([mockFlightDoc]),
+        }),
+      });
+
+      const query: SearchFlightsDto = {
+        origin: 'cai',
+        destination: 'ber',
+        departureDate: '2026-12-01',
+        passengers: 3,
+        cabinClass: CabinClass.BUSINESS,
+      };
+
+      const results = await service.search(query);
+
+      expect(results).toHaveLength(1);
+      expect(results[0].selectedCabin.cabinClass).toBe(CabinClass.BUSINESS);
+      expect(results[0].selectedCabin.pricePerPassenger).toBe(800);
+      expect(results[0].selectedCabin.totalPrice).toBe(2400); // 3 * 800
+      expect(results[0].selectedCabin.availableSeats).toBe(15); // 20 - 5
+    });
+
+    it('should exclude flights when available seats are less than requested passengers', async () => {
+      const fullFlight = {
+        ...mockFlightDoc,
+        cabins: [
+          {
+            cabinClass: CabinClass.ECONOMY,
+            seatCount: 150,
+            bookedSeats: 150, // 0 available
+            heldSeats: 0,
+            price: 250,
+          },
+        ],
+      };
+
+      mockFlightModel.find.mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue([fullFlight]),
+        }),
+      });
+
+      const query: SearchFlightsDto = {
+        origin: 'CAI',
+        destination: 'BER',
+        departureDate: '2026-12-01',
+        passengers: 1,
+      };
+
+      const results = await service.search(query);
+      expect(results).toEqual([]);
+    });
+
+    it('should reject search when origin and destination are identical', async () => {
+      const invalidQuery: SearchFlightsDto = {
+        origin: 'CAI',
+        destination: 'cai',
+        departureDate: '2026-12-01',
+      };
+
+      await expect(service.search(invalidQuery)).rejects.toThrow(BadRequestException);
+    });
+
+    it('should reject search with impossible calendar date (e.g. Feb 30 or non-leap Feb 29)', async () => {
+      const feb30Query: SearchFlightsDto = {
+        origin: 'CAI',
+        destination: 'BER',
+        departureDate: '2026-02-30',
+      };
+      await expect(service.search(feb30Query)).rejects.toThrow(BadRequestException);
+
+      const nonLeapFeb29Query: SearchFlightsDto = {
+        origin: 'CAI',
+        destination: 'BER',
+        departureDate: '2026-02-29', // 2026 is not a leap year
+      };
+      await expect(service.search(nonLeapFeb29Query)).rejects.toThrow(BadRequestException);
+    });
+
+    it('should sort search results by duration (FLT-15)', async () => {
+      const flight1 = {
+        ...mockFlightDoc,
+        _id: new Types.ObjectId(),
+        flightNumber: 'MS777',
+        departureTimeUtc: new Date('2026-12-01T12:00:00.000Z'),
+        arrivalTimeUtc: new Date('2026-12-01T16:00:00.000Z'), // 240 mins
+      };
+      const flight2 = {
+        ...mockFlightDoc,
+        _id: new Types.ObjectId(),
+        flightNumber: 'MS888',
+        departureTimeUtc: new Date('2026-12-01T12:00:00.000Z'),
+        arrivalTimeUtc: new Date('2026-12-01T15:00:00.000Z'), // 180 mins
+      };
+
+      mockFlightModel.find.mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue([flight1, flight2]),
+        }),
+      });
+
+      const query: SearchFlightsDto = {
+        origin: 'CAI',
+        destination: 'BER',
+        departureDate: '2026-12-01',
+        sortBy: FlightSortBy.DURATION,
+      };
+
+      const results = await service.search(query);
+      expect(results).toHaveLength(2);
+      expect(results[0].flightNumber).toBe('MS888'); // 180 min duration first
+      expect(results[1].flightNumber).toBe('MS777'); // 240 min duration second
+    });
+
+    it('should exclude flights that departed in the past', async () => {
+      const pastFlight = {
+        ...mockFlightDoc,
+        _id: new Types.ObjectId(),
+        flightNumber: 'MS999',
+        departureTimeUtc: new Date(Date.now() - 3600 * 1000), // 1 hour ago
+        arrivalTimeUtc: new Date(Date.now() + 3600 * 1000),
+      };
+
+      mockFlightModel.find.mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue([pastFlight]),
+        }),
+      });
+
+      const query: SearchFlightsDto = {
+        origin: 'CAI',
+        destination: 'BER',
+        departureDate: '2026-12-01',
+      };
+
+      const results = await service.search(query);
+      expect(results).toEqual([]);
     });
   });
 });

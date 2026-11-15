@@ -75,6 +75,11 @@ export class CreateAirlineDto {
   @IsUrl()
   website?: string;
 
+  @ApiPropertyOptional({ example: 'https://example.com/logo.png', description: 'Logo image URL' })
+  @IsOptional()
+  @IsUrl()
+  logoUrl?: string;
+
   @ApiPropertyOptional({ type: BaggagePolicyDto })
   @IsOptional()
   @ValidateNested()

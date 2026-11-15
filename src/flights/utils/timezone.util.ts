@@ -1,6 +1,31 @@
 import { BadRequestException } from '@nestjs/common';
 
 /**
+ * Validates whether a date string is a real, valid calendar date (YYYY-MM-DD).
+ * Catches impossible dates such as February 30 or April 31, and respects leap years.
+ */
+export function isValidCalendarDate(dateString: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    return false;
+  }
+
+  const [year, month, day] = dateString.split('-').map(Number);
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return false;
+  }
+
+  const date = new Date(year, month - 1, day);
+
+  // JavaScript Date rolls over invalid days (e.g. Feb 30 becomes Mar 2).
+  // If a rollover occurred, the components will no longer match.
+  return (
+    date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day
+  );
+}
+
+/**
  * Validates whether a timeZone string is a valid IANA time zone identifier.
  */
 export function isValidIanaTimeZone(timeZone: string): boolean {
@@ -30,6 +55,12 @@ export function localToUtc(localIsoString: string, timeZone: string): Date {
   }
 
   const [datePart, timePart] = parts;
+  if (!isValidCalendarDate(datePart)) {
+    throw new BadRequestException(
+      `Invalid calendar date '${datePart}' in '${localIsoString}'. Impossible dates (such as February 30) are not permitted.`,
+    );
+  }
+
   const [year, month, day] = datePart.split('-').map(Number);
   const [hours, minutes, seconds = 0] = timePart.split(':').map(Number);
 
@@ -42,12 +73,23 @@ export function localToUtc(localIsoString: string, timeZone: string): Date {
     );
   }
 
+  if (
+    hours < 0 || hours > 23 ||
+    minutes < 0 || minutes > 59 ||
+    seconds < 0 || seconds > 59
+  ) {
+    throw new BadRequestException(
+      `Invalid clock time in '${localIsoString}'. Hours must be 00-23, minutes 00-59, seconds 00-59.`,
+    );
+  }
+
   // Baseline UTC date with the specified numerical components
   const utcDate = new Date(Date.UTC(year, month - 1, day, hours, minutes, seconds));
 
   // Determine timezone offset in that specific moment using Intl
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone,
+    hourCycle: 'h23',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -79,9 +121,9 @@ export function localToUtc(localIsoString: string, timeZone: string): Date {
  */
 export function extractLocalDate(localIsoString: string): string {
   const [datePart] = localIsoString.split('T');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+  if (!isValidCalendarDate(datePart)) {
     throw new BadRequestException(
-      `Invalid date format in '${localIsoString}'. Expected YYYY-MM-DD`,
+      `Invalid calendar date '${datePart}' in '${localIsoString}'. Expected a valid real-world date in YYYY-MM-DD format.`,
     );
   }
   return datePart;
