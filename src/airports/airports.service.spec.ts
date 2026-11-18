@@ -93,3 +93,4 @@ describe('AirportsService', () => {
     expect(result).toEqual([]);
   });
 });
+import { jest } from '@jest/globals';

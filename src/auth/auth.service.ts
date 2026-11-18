@@ -109,7 +109,7 @@ export class AuthService {
         role: user.role,
         mustChangePassword: user.mustChangePassword,
       },
-      redirectTo: this.getRoleHome(user.role),
+      redirectTo: this.getSafeReturnPath(dto.returnTo) ?? this.getRoleHome(user.role),
     };
   }
 
@@ -127,6 +127,14 @@ export class AuthService {
       default:
         return '/dashboard';
     }
+  }
+
+  private getSafeReturnPath(returnTo?: string): string | undefined {
+    if (!returnTo || !returnTo.startsWith('/') || returnTo.startsWith('//')) {
+      return undefined;
+    }
+
+    return returnTo;
   }
   async register(dto: RegisterDto) {
     if (!dto.termsAccepted) {
@@ -328,10 +336,6 @@ async updateProfile(
     throw new NotFoundException('Account not found');
   }
 
-  if (user.role === UserRole.ADMINISTRATOR || user.role === UserRole.GUEST) {
-    throw new BadRequestException('Only registered users and moderators can be reset');
-  }
-
   return {
     message: 'Profile updated successfully',
     user: {
@@ -353,6 +357,10 @@ async adminResetPassword(
 
   if (!user) {
     throw new NotFoundException('Account not found');
+  }
+
+  if (user.role === UserRole.ADMINISTRATOR || user.role === UserRole.GUEST) {
+    throw new BadRequestException('Only registered users and moderators can be reset');
   }
 
   const hashedPassword = await bcrypt.hash(
