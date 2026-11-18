@@ -154,13 +154,17 @@ export class FlightsService {
 
     const flights = await this.flightModel
       .find(filter)
-      .populate('airlineId', 'name iataCode logoUrl baggagePolicy cancellationPolicy')
+      .populate('airlineId', 'name iataCode logoUrl baggagePolicy cancellationPolicy isActive')
       .exec();
 
     const results = [];
     const now = Date.now();
 
     for (const flight of flights) {
+      if (!flight.airlineId || (flight.airlineId as any).isActive === false) {
+        continue;
+      }
+
       // Exclude flights that have already departed (even if on today's calendar date)
       if (flight.departureTimeUtc.getTime() <= now) {
         continue;

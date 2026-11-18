@@ -92,8 +92,9 @@ describe('AirlinesService', () => {
       _id: validId,
       name: 'EgyptAir',
       iataCode: 'MS',
-      save: jest.fn().mockResolvedValue(this),
+      save: jest.fn(),
     };
+    existingAirline.save.mockImplementation(async () => existingAirline);
 
     beforeEach(() => {
       mockAirlineModel.findById.mockReturnValue({
@@ -134,3 +135,4 @@ describe('AirlinesService', () => {
     });
   });
 });
+import { jest } from '@jest/globals';

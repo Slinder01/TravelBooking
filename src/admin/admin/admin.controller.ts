@@ -6,6 +6,8 @@ import {
   Body,
   Query,
   UseGuards,
+  Patch,
+  NotFoundException,
 } from '@nestjs/common';
 
 import {
@@ -31,6 +33,7 @@ import { AuthService } from '../../auth/auth.service';
 import { UsersService } from '../../users/users.service';
 import { AdminResetPasswordDto } from '../../auth/dtos/admin-reset-password.dto';
 import { ListAccountsQueryDto } from './dtos/list-accounts-query.dto';
+import { AirlinesService } from '../../airlines/airlines.service';
 
 @ApiTags('Administration')
 @ApiCookieAuth('access_token')
@@ -40,6 +43,7 @@ export class AdminController {
   constructor(
     private readonly authService: AuthService,
     private readonly usersService: UsersService,
+    private readonly airlinesService: AirlinesService,
   ) {}
 
   @Get('dashboard')
@@ -106,5 +110,69 @@ export class AdminController {
     @Body() dto: AdminResetPasswordDto,
   ) {
     return this.authService.adminResetPassword(userId, dto.temporaryPassword);
+  }
+
+  @Patch('accounts/:id/suspend')
+  @Roles(UserRole.ADMINISTRATOR)
+  @ApiOperation({ summary: 'Suspend a registered user or moderator' })
+  @ApiOkResponse({ description: 'Account suspended and refresh session revoked' })
+  @ApiBadRequestResponse({ description: 'Account role cannot be suspended' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Administrator privileges required' })
+  suspendAccount(@Param('id') id: string) {
+    return this.usersService.setAccountSuspended(id, true).then((user) => ({
+      id: user._id.toString(),
+      status: 'SUSPENDED',
+    }));
+  }
+
+  @Patch('accounts/:id/reactivate')
+  @Roles(UserRole.ADMINISTRATOR)
+  @ApiOperation({ summary: 'Reactivate a suspended user or moderator' })
+  @ApiOkResponse({ description: 'Account reactivated' })
+  @ApiBadRequestResponse({ description: 'Account role cannot be reactivated' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Administrator privileges required' })
+  reactivateAccount(@Param('id') id: string) {
+    return this.usersService.setAccountSuspended(id, false).then((user) => ({
+      id: user._id.toString(),
+      status: user.isDeactivated ? 'DEACTIVATED' : 'ACTIVE',
+    }));
+  }
+
+  @Patch('providers/:type/:id/deactivate')
+  @Roles(UserRole.ADMINISTRATOR)
+  @ApiOperation({ summary: 'Deactivate an airline provider' })
+  @ApiOkResponse({ description: 'Airline deactivated and hidden from airline listing' })
+  @ApiBadRequestResponse({ description: 'Provider type is invalid or unsupported' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Administrator privileges required' })
+  deactivateProvider(
+    @Param('type') type: string,
+    @Param('id') id: string,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    if (type !== 'airline') {
+      throw new NotFoundException(`Provider type '${type}' is not available in this backend`);
+    }
+    return this.airlinesService.update(id, { isActive: false }, admin);
+  }
+
+  @Patch('providers/:type/:id/reactivate')
+  @Roles(UserRole.ADMINISTRATOR)
+  @ApiOperation({ summary: 'Reactivate an airline provider' })
+  @ApiOkResponse({ description: 'Airline reactivated' })
+  @ApiBadRequestResponse({ description: 'Provider type is invalid or unsupported' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Administrator privileges required' })
+  reactivateProvider(
+    @Param('type') type: string,
+    @Param('id') id: string,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    if (type !== 'airline') {
+      throw new NotFoundException(`Provider type '${type}' is not available in this backend`);
+    }
+    return this.airlinesService.update(id, { isActive: true }, admin);
   }
 }
