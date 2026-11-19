@@ -1,5 +1,5 @@
-import { Controller, Get, Post, Put, Patch, Delete, Body, Param, Req, Query, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, Put, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiCookieAuth } from '@nestjs/swagger';
 import { HotelService } from './hotel.service';
 import { CreateHotelDto } from './dto/create-hotel.dto';
 import { CreateRoomDto } from './dto/create-room.dto';
@@ -10,6 +10,11 @@ import { UpdateHotelDto } from './dto/update-hotel.dto';
 import { CreateRoomAvailabilityDto } from './dto/create-room-availability.dto';
 import { UpdateRoomAvailabilityDto } from './dto/update-room-availability.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles/roles.guard';
+import { Roles } from '../common/decorators/roles/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user/current-user.decorator';
+import { UserRole } from '../users/users-role.enum';
+import type { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 
 @ApiTags('Hotels & Rooms')
 @Controller('hotels')
@@ -17,13 +22,16 @@ export class HotelController {
   constructor(private readonly hotelService: HotelService) {}
 
   @Post()
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR, UserRole.ADMINISTRATOR)
+  @ApiCookieAuth('access_token')
   @ApiOperation({ summary: 'Create a hotel profile (HTL-01)' })
   @ApiResponse({ status: 201, description: 'Hotel successfully created.' })
-  async create(@Body() createHotelDto: CreateHotelDto, @Req() req: any) {
-    const moderatorId = req.user?.userId || '650c1234567890abcdef1234';
-    return this.hotelService.create(createHotelDto, moderatorId);
+  async create(
+    @Body() createHotelDto: CreateHotelDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.hotelService.create(createHotelDto, user.id);
   }
 
   @Get('search')
@@ -46,8 +54,9 @@ export class HotelController {
   }
 
   @Patch(':id')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR, UserRole.ADMINISTRATOR)
+  @ApiCookieAuth('access_token')
   @ApiOperation({ summary: 'Update hotel profile (HTL-01)' })
   async update(
     @Param('id') id: string,
@@ -57,8 +66,9 @@ export class HotelController {
   }
 
   @Post(':id/rooms')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR, UserRole.ADMINISTRATOR)
+  @ApiCookieAuth('access_token')
   @ApiOperation({ summary: 'Add a room to a hotel (HTL-03)' })
   async createRoom(
     @Param('id') hotelId: string,
@@ -68,8 +78,9 @@ export class HotelController {
   }
 
   @Patch(':id/rooms/:roomId')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR, UserRole.ADMINISTRATOR)
+  @ApiCookieAuth('access_token')
   @ApiOperation({ summary: 'Update room details (HTL-05)' })
   async updateRoom(
     @Param('roomId') roomId: string,
@@ -79,8 +90,9 @@ export class HotelController {
   }
 
   @Delete(':id/rooms/:roomId')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR, UserRole.ADMINISTRATOR)
+  @ApiCookieAuth('access_token')
   @ApiOperation({ summary: 'Delete a room (HTL-06)' })
   async removeRoom(@Param('roomId') roomId: string) {
     return this.hotelService.removeRoom(roomId);
@@ -93,8 +105,9 @@ export class HotelController {
   }
 
   @Put(':id/policies')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR, UserRole.ADMINISTRATOR)
+  @ApiCookieAuth('access_token')
   @ApiOperation({ summary: 'Set or update hotel cancellation and stay policies (HTL-09, HTL-10)' })
   async updatePolicies(
     @Param('id') hotelId: string,
@@ -104,8 +117,9 @@ export class HotelController {
   }
 
   @Post(':id/rooms/:roomId/availability')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR, UserRole.ADMINISTRATOR)
+  @ApiCookieAuth('access_token')
   @ApiOperation({ summary: 'Set availability and pricing for a room (HTL-04)' })
   async createRoomAvailability(
     @Param('id') hotelId: string,
@@ -116,8 +130,9 @@ export class HotelController {
   }
 
   @Patch(':id/rooms/:roomId/availability/:availabilityId')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR, UserRole.ADMINISTRATOR)
+  @ApiCookieAuth('access_token')
   @ApiOperation({ summary: 'Update availability and blocked dates for a room (HTL-05, HTL-06)' })
   async updateRoomAvailability(
     @Param('id') hotelId: string,
@@ -129,8 +144,9 @@ export class HotelController {
   }
 
   @Get(':id/availability')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR, UserRole.ADMINISTRATOR)
+  @ApiCookieAuth('access_token')
   @ApiOperation({ summary: 'Get overall hotel availability overview (HTL-08)' })
   async getHotelAvailability(@Param('id') hotelId: string) {
     return this.hotelService.getHotelAvailability(hotelId);
@@ -147,8 +163,9 @@ export class HotelController {
   }
 
   @Get(':id/reservations')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.HOTEL_MODERATOR, UserRole.ADMINISTRATOR)
+  @ApiCookieAuth('access_token')
   @ApiOperation({ summary: 'View reservations for the hotel moderator (HTL-22)' })
   async getHotelReservations(@Param('id') hotelId: string) {
     return this.hotelService.getHotelReservations(hotelId);
