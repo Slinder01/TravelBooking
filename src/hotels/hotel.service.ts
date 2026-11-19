@@ -33,11 +33,11 @@ export class HotelService {
   }
 
   async findAll(): Promise<Hotel[]> {
-    return this.hotelModel.find().exec();
+    return this.hotelModel.find({ isActive: { $ne: false } }).exec();
   }
 
   async findOne(id: string): Promise<Hotel> {
-    const hotel = await this.hotelModel.findById(id).exec();
+    const hotel = await this.hotelModel.findOne({ _id: id, isActive: { $ne: false } }).exec();
     if (!hotel) {
       throw new NotFoundException(`Hotel with ID ${id} not found`);
     }
@@ -109,6 +109,7 @@ export class HotelService {
       filter.averageRating = { $gte: Number(minRating) };
     }
 
+    filter.isActive = { $ne: false };
     const hotels = await this.hotelModel.find(filter).lean().exec();
     let results: any[] = hotels;
 
@@ -233,4 +234,15 @@ export class HotelService {
   async getHotelReservations(hotelId: string): Promise<any[]> {
     return this.bookingModel.find({ hotelId: hotelId as any }).exec();
   }
+
+  async setHotelActive(id: string, isActive: boolean) {
+    const hotel = await this.hotelModel.findByIdAndUpdate(
+      id,
+      { $set: { isActive } },
+      { new: true, runValidators: true },
+    ).exec();
+    if (!hotel) throw new NotFoundException(`Hotel with ID ${id} not found`);
+    return hotel;
+  }
+
 }

@@ -14,5 +14,6 @@ import { RoomAvailability, RoomAvailabilitySchema } from '../hotels/schemas/room
   ],
   controllers: [BookingController],
   providers: [BookingService],
+  exports: [BookingService],
 })
 export class BookingModule {}
