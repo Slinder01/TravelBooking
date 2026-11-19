@@ -12,33 +12,75 @@ export class BookingService {
     @InjectModel(RoomAvailability.name) private roomAvailabilityModel: Model<RoomAvailability>,
   ) {}
 
+  private getStayDates(checkIn: Date, checkOut: Date): Date[] {
+    const dates: Date[] = [];
+    const cursor = new Date(Date.UTC(checkIn.getUTCFullYear(), checkIn.getUTCMonth(), checkIn.getUTCDate()));
+    const end = new Date(Date.UTC(checkOut.getUTCFullYear(), checkOut.getUTCMonth(), checkOut.getUTCDate()));
+
+    while (cursor < end) {
+      dates.push(new Date(cursor));
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+
+    return dates;
+  }
+
   async createBooking(userId: string, dto: CreateBookingDto): Promise<Booking> {
     const checkIn = new Date(dto.checkInDate);
     const checkOut = new Date(dto.checkOutDate);
+
+    if (Number.isNaN(checkIn.getTime()) || Number.isNaN(checkOut.getTime())) {
+      throw new BadRequestException('Invalid check-in or check-out date');
+    }
 
     if (checkIn >= checkOut) {
       throw new BadRequestException('Check-out date must be after check-in date');
     }
 
-    // ATOMIC CONCURRENCY-SAFE AVAILABILITY DECREMENT
-    // This ensures two simultaneous requests cannot grab the last available room
-    const availability = await this.roomAvailabilityModel.findOneAndUpdate(
-      {
-        roomId: dto.roomId as any,
-        hotelId: dto.hotelId as any,
-        startDate: { $lte: checkOut },
-        endDate: { $gte: checkIn },
-        availableCount: { $gt: 0 },
-      },
-      { $inc: { availableCount: -1 } },
-      { new: true },
-    ).exec();
-
-    if (!availability) {
-      throw new BadRequestException('Room is not available for the selected dates or is fully booked');
+    const stayDates = this.getStayDates(checkIn, checkOut);
+    if (stayDates.length === 0) {
+      throw new BadRequestException('Booking must be for at least one night');
     }
 
-    // Create the booking
+    const decrementedDates: Date[] = [];
+
+    // ATOMIC CONCURRENCY-SAFE AVAILABILITY DECREMENT PER NIGHT
+    for (const nightDate of stayDates) {
+      const updated = await this.roomAvailabilityModel
+        .findOneAndUpdate(
+          {
+            roomId: dto.roomId as any,
+            hotelId: dto.hotelId as any,
+            date: nightDate,
+            isBlocked: { $ne: true },
+            availableCount: { $gt: 0 },
+          },
+          { $inc: { availableCount: -1 } },
+          { new: true },
+        )
+        .exec();
+
+      if (!updated) {
+        // Roll back earlier nights if a later night has no availability
+        for (const prevDate of decrementedDates) {
+          await this.roomAvailabilityModel
+            .findOneAndUpdate(
+              {
+                roomId: dto.roomId as any,
+                hotelId: dto.hotelId as any,
+                date: prevDate,
+              },
+              { $inc: { availableCount: 1 } },
+            )
+            .exec();
+        }
+
+        throw new BadRequestException('Room is not available for the selected dates or is fully booked');
+      }
+
+      decrementedDates.push(nightDate);
+    }
+
     const newBooking = new this.bookingModel({
       userId: userId as any,
       hotelId: dto.hotelId as any,
@@ -51,9 +93,18 @@ export class BookingService {
     try {
       return await newBooking.save();
     } catch (error) {
-      // Rollback availability count if booking save fails
-      availability.availableCount += 1;
-      await availability.save();
+      for (const prevDate of decrementedDates) {
+        await this.roomAvailabilityModel
+          .findOneAndUpdate(
+            {
+              roomId: dto.roomId as any,
+              hotelId: dto.hotelId as any,
+              date: prevDate,
+            },
+            { $inc: { availableCount: 1 } },
+          )
+          .exec();
+      }
       throw error;
     }
   }
@@ -77,17 +128,19 @@ export class BookingService {
       throw new BadRequestException('Booking is already cancelled');
     }
 
-    // Restore room availability count
-    const availability = await this.roomAvailabilityModel.findOne({
-      roomId: booking.roomId as any,
-      hotelId: booking.hotelId as any,
-      startDate: { $lte: booking.checkOutDate },
-      endDate: { $gte: booking.checkInDate },
-    }).exec();
+    const stayDates = this.getStayDates(new Date(booking.checkInDate), new Date(booking.checkOutDate));
 
-    if (availability) {
-      (availability as any).availableCount += 1;
-      await availability.save();
+    for (const nightDate of stayDates) {
+      await this.roomAvailabilityModel
+        .findOneAndUpdate(
+          {
+            roomId: booking.roomId as any,
+            hotelId: booking.hotelId as any,
+            date: nightDate,
+          },
+          { $inc: { availableCount: 1 } },
+        )
+        .exec();
     }
 
     booking.status = 'cancelled';

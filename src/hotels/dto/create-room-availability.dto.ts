@@ -1,13 +1,26 @@
-import { IsDateString, IsNumber, Min } from 'class-validator';
+import { IsBoolean, IsDateString, IsNumber, IsOptional, Min } from 'class-validator';
 
 export class CreateRoomAvailabilityDto {
   @IsDateString()
-  startDate: string;
+  date: string;
 
+  @IsOptional()
   @IsDateString()
-  endDate: string;
+  startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
 
   @IsNumber()
   @Min(0)
   availableCount: number;
+
+  @IsNumber()
+  @Min(0)
+  price: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isBlocked?: boolean;
 }

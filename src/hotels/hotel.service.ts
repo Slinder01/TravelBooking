@@ -172,14 +172,15 @@ export class HotelService {
     }
 
     const newAvailability = new this.roomAvailabilityModel({
-      roomId,
-      hotelId,
-      startDate: new Date(dto.startDate),
-      endDate: new Date(dto.endDate),
-      availableCount: dto.availableCount,
-    });
-
-    return newAvailability.save();
+        roomId,
+        hotelId,
+        date: new Date(dto.date ?? dto.startDate!),
+        availableCount: dto.availableCount,
+        price: dto.price ?? (room as any).pricePerNight,
+        isBlocked: dto.isBlocked ?? false,
+      });
+      
+      return newAvailability.save();
   }
 
   async updateRoomAvailability(
@@ -214,27 +215,22 @@ export class HotelService {
     const startDate = new Date(checkIn);
     const endDate = new Date(checkOut);
 
-    // Find availability records for this hotel overlapping with the dates and availableCount > 0
     const availabilities = await this.roomAvailabilityModel.find({
       hotelId: hotelId as any,
-      startDate: { $lte: endDate },
-      endDate: { $gte: startDate },
+      date: { $gte: startDate, $lte: endDate },
       availableCount: { $gt: 0 },
+      isBlocked: { $ne: true },
     }).exec();
 
-    const roomIds = availabilities.map((a) => a.roomId);
+    const roomIds = [...new Set(availabilities.map((a) => String(a.roomId)))];
 
-    // Fetch the actual room details for those IDs
     return this.roomModel.find({
       _id: { $in: roomIds as any },
       hotelId: hotelId as any,
     }).exec();
   }
-
   // Hotel Moderator View of Reservations (Requirement HTL-22)
   async getHotelReservations(hotelId: string): Promise<any[]> {
-    // Assuming you have a Hotel Booking model or similar schema injected in hotel module
-    // If your booking model is imported, we can query it directly:
     return this.bookingModel.find({ hotelId: hotelId as any }).exec();
   }
 }
