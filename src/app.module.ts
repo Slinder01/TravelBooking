@@ -1,10 +1,12 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
-import { ConfigService } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { AdminModule } from './admin/admin/admin.module';
 import { CommonModule } from './common/common.module';
+import { HotelModule } from './hotels/hotel.module';
+import { BookingModule } from './bookings/booking.module';
+import { ReviewModule } from './reviews/review.module';
 
 @Module({
   imports: [
@@ -12,7 +14,6 @@ import { CommonModule } from './common/common.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-    
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -20,10 +21,11 @@ import { CommonModule } from './common/common.module';
       }),
       inject: [ConfigService],
     }),
-    
     AdminModule,
-    
     CommonModule,
+    HotelModule,
+    BookingModule,
+    ReviewModule,
   ],
 })
 export class AppModule {}
