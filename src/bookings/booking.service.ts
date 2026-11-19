@@ -146,4 +146,25 @@ export class BookingService {
     booking.status = 'cancelled';
     return booking.save();
   }
+
+  async listAllBookings(query: { page: number; limit: number; status?: string }) {
+    const filter: Record<string, unknown> = {};
+    if (query.status) filter.status = query.status;
+    const [items, total] = await Promise.all([
+      this.bookingModel.find(filter).sort({ createdAt: -1, _id: -1 })
+        .skip((query.page - 1) * query.limit).limit(query.limit)
+        .populate('userId', 'name email').populate('hotelId', 'name city country')
+        .populate('roomId', 'roomNumber type').lean().exec(),
+      this.bookingModel.countDocuments(filter).exec(),
+    ]);
+    return { items, total };
+  }
+
+  async hasUpcomingConfirmedBooking(userId: string): Promise<boolean> {
+    return this.bookingModel.exists({
+      userId: userId as any,
+      status: 'confirmed',
+      checkOutDate: { $gt: new Date() },
+    }).then(Boolean);
+  }
 }

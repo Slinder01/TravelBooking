@@ -146,4 +146,43 @@ export class UsersService {
 
     return updated;
   }
+
+  async deactivateAccount(id: string) {
+    const user = await this.userModel.findById(id).exec();
+    if (!user) throw new NotFoundException('Account not found');
+    if (user.role !== UserRole.REGISTERED_USER) {
+      throw new BadRequestException('Only registered users can deactivate their account');
+    }
+    user.isDeactivated = true;
+    user.refreshTokenHash = null;
+    user.email = `deleted+${user._id.toString()}@accounts.invalid`;
+    user.name = 'Deleted account';
+    user.phone = undefined;
+    await user.save();
+    return { message: 'Account deactivated successfully' };
+  }
+
+  async createModerator(input: {
+    name: string;
+    email: string;
+    password: string;
+    role: UserRole.AIRLINE_MODERATOR | UserRole.HOTEL_MODERATOR;
+    airlineId?: string;
+    hotelId?: string;
+  }) {
+    const existing = await this.userModel.findOne({ email: input.email.toLowerCase().trim() }).exec();
+    if (existing) throw new BadRequestException('Email already registered');
+    try {
+      return await this.userModel.create({
+        ...input,
+        email: input.email.toLowerCase().trim(),
+        mustChangePassword: true,
+        termsAccepted: true,
+        termsAcceptedAt: new Date(),
+      });
+    } catch (error: any) {
+      if (error?.code === 11000) throw new BadRequestException('Email already registered');
+      throw error;
+    }
+  }
 }
