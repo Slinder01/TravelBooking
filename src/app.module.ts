@@ -10,6 +10,7 @@ import { ReviewModule } from './reviews/review.module';
 import { AirlinesModule } from './airlines/airlines.module';
 import { AirportsModule } from './airports/airports.module';
 import { FlightsModule } from './flights/flights.module';
+import { FlightBookingsModule } from './flight-bookings/flight-bookings.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { FlightsModule } from './flights/flights.module';
     AirlinesModule,
     AirportsModule,
     FlightsModule,
+    FlightBookingsModule,
     ConfigModule.forRoot({
       isGlobal: true,
     }),

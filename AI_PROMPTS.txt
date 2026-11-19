@@ -30,3 +30,14 @@ Design and implement the public one-way flight search endpoint (GET /api/flights
 How the output was used:
 Created SearchFlightsDto with class-validator decorators, implemented FlightsService.search() with in-memory cabin qualification and duration/price calculations, exposed a public GET /api/flights/search endpoint in FlightsController, and verified with automated unit tests.
 ================================================
+
+================================================
+Date: 2026-11-19
+Student: Team Member (sowerinchampion)
+Tool: Antigravity (Gemini)
+Related Requirement: FLT-19, FLT-21, FLT-22, FLT-23, FLT-25, FLT-26, FLT-29
+Prompt:
+Design and implement the FlightBookings module with embedded Passenger subdocuments, policy/price snapshots, concurrency-safe atomic seat holds with automatic expiration release, passenger & extra-baggage booking creation, booking inspection, e-ticket generation, policy-based cancellations/refunds, and moderator passenger manifest export.
+How the output was used:
+Built FlightBooking schema with embedded Passenger, PriceBreakdown, and BookingPolicySnapshot subdocuments, used MongoDB atomic findOneAndUpdate with $expr/$filter and arrayFilters to prevent overselling under concurrent requests, added lazy + periodic hold expiration release, implemented endpoints for hold/create/list/detail/e-ticket/cancel and flight manifest export (JSON/CSV), exported cross-module helpers for ACC-12 and ACC-17, and verified with 13 unit tests and live MongoDB Atlas concurrency checks.
+================================================
