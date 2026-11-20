@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Param, ParseEnumPipe, Post, RawBodyRequest, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, ParseEnumPipe, Post, Req, UseGuards, type RawBodyRequest } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { PaymentsService } from './payments.service';
@@ -35,7 +35,7 @@ export class PaymentsController {
 
   // NO auth guard: Stripe calls this. Security = signature verification.
   @Post('payments/webhook')
-  webhook(@Req() req: any, @Headers('stripe-signature') sig: string) {
+  webhook(@Req() req: RawBodyRequest<Request>, @Headers('stripe-signature') sig: string) {
     return this.svc.handleWebhook(req.rawBody as Buffer, sig);
   }
 }

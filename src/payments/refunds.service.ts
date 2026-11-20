@@ -8,6 +8,7 @@ import { PaymentsService } from './payments.service';
 import type { AuthUser } from '../common/auth-user';
 import { BOOKING_STATUS } from '../common/booking-status';
 import { UserRole } from '../users/users-role.enum';
+import { FlightBookingsService } from '../flight-bookings/flight-bookings.service';
 
 export interface PolicyTier { hoursBefore: number; refundPercent: number }
 
@@ -21,23 +22,67 @@ export function calculateRefundPercent(policy: PolicyTier[] | undefined, eventDa
 
 @Injectable()
 export class RefundsService {
-  private stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
+  private stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_dummy');
   constructor(
     @InjectModel(Refund.name) private refundModel: Model<Refund>,
     @InjectModel(Payment.name) private paymentModel: Model<Payment>,
     private payments: PaymentsService,
+    private readonly flightBookingsService: FlightBookingsService,
   ) {}
 
   /** Teammates call this from POST /flight-bookings/:id/cancel and POST /hotel-bookings/:id/cancel */
   async processCancellation(type: 'flight' | 'hotel', bookingId: string, user: AuthUser) {
+    if (type === 'flight') {
+      const b = await this.payments.loadOwnedBooking(type, bookingId, user);
+      const payment = await this.paymentModel.findOne({ bookingId: b._id, status: 'succeeded' });
+      const cancelResult = await this.flightBookingsService.cancelBooking(
+        bookingId,
+        { reason: 'Customer requested refund via payment service' },
+        { id: user.id, email: user.email, role: user.role as any },
+      );
+      const amount = cancelResult.refundAmount;
+      const refund = await this.refundModel.create({
+        paymentId: payment?._id,
+        bookingId: b._id,
+        bookingType: type,
+        userId: b.userId,
+        amount,
+        currency: payment?.currency ?? 'USD',
+        refundPercent: cancelResult.policyApplied.refundPercentage,
+        status: amount > 0 && payment ? 'pending' : 'not_applicable',
+        policyApplied: cancelResult.policyApplied,
+      });
+
+      if (amount > 0 && payment?.stripePaymentIntentId) {
+        try {
+          const zero = ['JPY', 'KRW', 'VND', 'CLP'].includes(payment.currency);
+          const r = await this.stripe.refunds.create({
+            payment_intent: payment.stripePaymentIntentId,
+            amount: zero ? Math.round(amount) : Math.round(amount * 100),
+          });
+          refund.stripeRefundId = r.id;
+          refund.status = r.status === 'failed' ? 'failed' : 'succeeded';
+        } catch {
+          refund.status = 'failed';
+        }
+        await refund.save();
+      }
+      return refund;
+    }
+
     const b = await this.payments.loadOwnedBooking(type, bookingId, user);
-    if (b.status !== BOOKING_STATUS.CONFIRMED) throw new BadRequestException(`Cannot cancel a ${b.status} booking`);
-    if (new Date(b.eventDate) <= new Date()) throw new BadRequestException('Event already started or passed');
+    if (b.status !== BOOKING_STATUS.CONFIRMED && b.status !== 'confirmed') {
+      throw new BadRequestException(`Cannot cancel a ${b.status} booking`);
+    }
+    const eventDate = b.checkInDate ? new Date(b.checkInDate) : new Date(b.eventDate);
+    if (!Number.isNaN(eventDate.getTime()) && eventDate <= new Date()) {
+      throw new BadRequestException('Event already started or passed');
+    }
 
     const payment = await this.paymentModel.findOne({ bookingId: b._id, status: 'succeeded' });
     if (!payment) throw new BadRequestException('No successful payment found');
 
-    const percent = calculateRefundPercent(b.cancellationPolicy, new Date(b.eventDate));
+    const percent = calculateRefundPercent(b.cancellationPolicy, eventDate);
     const amount = Math.round(payment.amount * percent) / 100;
 
     const refund = await this.refundModel.create({
@@ -55,14 +100,13 @@ export class RefundsService {
         });
         refund.stripeRefundId = r.id;
         refund.status = r.status === 'failed' ? 'failed' : 'succeeded';
-      } catch (e) {
+      } catch {
         refund.status = 'failed';
       }
       await refund.save();
     }
 
     await this.payments.bookingModel(type).updateOne({ _id: b._id }, { status: BOOKING_STATUS.CANCELLED });
-    // TODO: release inventory (teammate) + notification
     return refund;
   }
 

@@ -7,13 +7,17 @@ import { PaymentsService } from './payments.service';
 import { RefundsService } from './refunds.service';
 import { PaymentsController } from './payments.controller';
 import { RefundsController } from './refunds.controller';
+import { FlightBookingsModule } from '../flight-bookings/flight-bookings.module';
 
 @Module({
-  imports: [MongooseModule.forFeature([
-    { name: Payment.name, schema: PaymentSchema },
-    { name: Refund.name, schema: RefundSchema },
-    { name: PolicyAcceptance.name, schema: PolicyAcceptanceSchema },
-  ])],
+  imports: [
+    MongooseModule.forFeature([
+      { name: Payment.name, schema: PaymentSchema },
+      { name: Refund.name, schema: RefundSchema },
+      { name: PolicyAcceptance.name, schema: PolicyAcceptanceSchema },
+    ]),
+    FlightBookingsModule,
+  ],
   controllers: [PaymentsController, RefundsController],
   providers: [PaymentsService, RefundsService],
   exports: [RefundsService, PaymentsService],   // teammates import PaymentsModule to call processCancellation

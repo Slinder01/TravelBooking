@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { Connection, Model, Types } from 'mongoose';
+import { Model, Types, type Connection } from 'mongoose';
 import Stripe from 'stripe';
 import { randomInt } from 'crypto';
 import { Payment } from './schemas/payment.schema';
@@ -9,6 +9,7 @@ import { CreatePaymentDto } from './dto/create-payment.dto';
 import type { AuthUser } from '../common/auth-user';
 import { BOOKING_STATUS } from '../common/booking-status';
 import { UserRole } from '../users/users-role.enum';
+import { FlightBookingsService } from '../flight-bookings/flight-bookings.service';
 
 const ZERO_DECIMAL = new Set(['JPY', 'KRW', 'VND', 'CLP']);
 const toMinor = (amt: number, cur: string) =>
@@ -16,19 +17,24 @@ const toMinor = (amt: number, cur: string) =>
 
 @Injectable()
 export class PaymentsService {
-  private stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
+  private stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_test_dummy');
 
   constructor(
     @InjectModel(Payment.name) private paymentModel: Model<Payment>,
     @InjectModel(PolicyAcceptance.name) private acceptModel: Model<PolicyAcceptance>,
     @InjectConnection() private conn: Connection,
+    private readonly flightBookingsService: FlightBookingsService,
   ) {}
 
   bookingModel(type: 'flight' | 'hotel'): Model<any> {
-    return this.conn.model(type === 'flight' ? 'FlightBooking' : 'HotelBooking') as unknown as Model<any>;
+    if (type === 'flight') {
+      return (this.conn.models?.FlightBooking || this.conn.model('FlightBooking')) as unknown as Model<any>;
+    }
+    return (this.conn.models?.Booking || this.conn.models?.HotelBooking || this.conn.model('Booking')) as unknown as Model<any>;
   }
 
   async loadOwnedBooking(type: 'flight' | 'hotel', id: string, user: AuthUser) {
+    if (!Types.ObjectId.isValid(id)) throw new NotFoundException('Booking not found');
     const booking = await this.bookingModel(type).findById(id);
     if (!booking) throw new NotFoundException('Booking not found');
     if (String(booking.userId) !== user.id) throw new ForbiddenException('Not your booking');
@@ -38,14 +44,25 @@ export class PaymentsService {
   // ---------- PAY-02: policies ----------
   async getPolicies(type: 'flight' | 'hotel', id: string, user: AuthUser) {
     const b = await this.loadOwnedBooking(type, id, user);
+    if (type === 'flight') {
+      return {
+        policySnapshot: b.policySnapshot,
+        freeCancellationHours: b.policySnapshot?.freeCancellationHours,
+        refundPercentage: b.policySnapshot?.refundPercentage,
+      };
+    }
     return { cancellationPolicy: b.cancellationPolicy, policySummary: b.policySummary };
   }
 
   async acceptPolicies(type: 'flight' | 'hotel', id: string, user: AuthUser) {
     const b = await this.loadOwnedBooking(type, id, user);
+    const policySnapshot =
+      type === 'flight'
+        ? b.policySnapshot
+        : { cancellationPolicy: b.cancellationPolicy, policySummary: b.policySummary };
     return this.acceptModel.findOneAndUpdate(
       { bookingType: type, bookingId: b._id, userId: new Types.ObjectId(user.id) },
-      { $setOnInsert: { policySnapshot: { cancellationPolicy: b.cancellationPolicy, policySummary: b.policySummary } } },
+      { $setOnInsert: { policySnapshot } },
       { upsert: true, new: true },
     );
   }
@@ -53,13 +70,17 @@ export class PaymentsService {
   // ---------- PAY-01: create payment ----------
   async create(dto: CreatePaymentDto, user: AuthUser) {
     const b = await this.loadOwnedBooking(dto.bookingType, dto.bookingId, user);
-    if (b.status !== BOOKING_STATUS.PENDING_PAYMENT) throw new BadRequestException(`Booking is ${b.status}, cannot pay`);
+    if (b.status !== BOOKING_STATUS.PENDING_PAYMENT && b.status !== 'pending') {
+      throw new BadRequestException(`Booking is ${b.status}, cannot pay`);
+    }
     if (b.holdExpiresAt && b.holdExpiresAt < new Date()) throw new BadRequestException('Inventory hold expired');
 
     const accepted = await this.acceptModel.exists({
       bookingType: dto.bookingType, bookingId: b._id, userId: new Types.ObjectId(user.id),
     });
-    if (!accepted) throw new BadRequestException('You must accept the policies before paying');
+    if (!accepted && !b.policySnapshot?.acceptedAt) {
+      throw new BadRequestException('You must accept the policies before paying');
+    }
 
     const existing = await this.paymentModel.findOne({ bookingId: b._id, status: 'pending' });
     if (existing) {
@@ -67,16 +88,19 @@ export class PaymentsService {
       return { payment: existing, clientSecret: pi.client_secret };
     }
 
-    const currency = String(b.currency).toUpperCase();
+    const rawAmount = b.priceBreakdown?.totalPrice ?? b.totalPrice ?? b.amount ?? 0;
+    const rawCurrency = b.priceBreakdown?.currency ?? b.currency ?? 'USD';
+    const currency = String(rawCurrency).toUpperCase();
+
     const intent = await this.stripe.paymentIntents.create({
-      amount: toMinor(b.totalPrice, currency),
+      amount: toMinor(rawAmount, currency),
       currency: currency.toLowerCase(),
       automatic_payment_methods: { enabled: true },
       metadata: { bookingId: String(b._id), bookingType: dto.bookingType, userId: user.id },
     });
     const payment = await this.paymentModel.create({
       userId: b.userId, bookingType: dto.bookingType, bookingId: b._id,
-      amount: b.totalPrice, currency, stripePaymentIntentId: intent.id,
+      amount: rawAmount, currency, stripePaymentIntentId: intent.id,
     });
     return { payment, clientSecret: intent.client_secret };
   }
@@ -118,7 +142,11 @@ export class PaymentsService {
   async handleWebhook(rawBody: Buffer, signature: string) {
     let event: Stripe.Event;
     try {
-      event = this.stripe.webhooks.constructEvent(rawBody, signature, process.env.STRIPE_WEBHOOK_SECRET as string);
+      event = this.stripe.webhooks.constructEvent(
+        rawBody,
+        signature,
+        process.env.STRIPE_WEBHOOK_SECRET || 'whsec_dummy',
+      );
     } catch {
       throw new BadRequestException('Invalid webhook signature');
     }
@@ -138,16 +166,28 @@ export class PaymentsService {
       { new: true },
     );
     if (!p) return;
-    const reference = `BK-${new Date().getFullYear()}-${String(randomInt(0, 1_000_000)).padStart(6, '0')}`;
-    const res = await this.bookingModel(p.bookingType).updateOne(
-      { _id: p.bookingId, status: BOOKING_STATUS.PENDING_PAYMENT },
-      { status: BOOKING_STATUS.CONFIRMED, bookingReference: reference },
-    );
-    if (res.modifiedCount === 0) {
-      // Booking expired/cancelled while paying: refund fully so the user is not charged for nothing.
-      await this.stripe.refunds.create({ payment_intent: intentId });
+
+    if (p.bookingType === 'flight') {
+      try {
+        await this.flightBookingsService.confirmBookingAfterPayment(String(p.bookingId));
+      } catch (err) {
+        try {
+          await this.stripe.refunds.create({ payment_intent: intentId });
+        } catch {
+          /* ignore */
+        }
+        throw err;
+      }
+    } else {
+      const reference = `BK-${new Date().getFullYear()}-${String(randomInt(0, 1_000_000)).padStart(6, '0')}`;
+      const res = await this.bookingModel(p.bookingType).updateOne(
+        { _id: p.bookingId, status: { $in: [BOOKING_STATUS.PENDING_PAYMENT, 'pending'] } },
+        { status: BOOKING_STATUS.CONFIRMED, bookingReference: reference },
+      );
+      if (res.modifiedCount === 0) {
+        await this.stripe.refunds.create({ payment_intent: intentId });
+      }
     }
-    // TODO: NotificationsService.create(p.userId, 'Payment successful ...')
   }
 
   private async onFailed(intentId: string, reason: string) {
