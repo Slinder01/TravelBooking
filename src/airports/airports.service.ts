@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -7,6 +8,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Airport, AirportDocument } from './schemas/airport.schema';
 import { CreateAirportDto } from './dtos/create-airport.dto';
+import { isValidIanaTimeZone } from '../flights/utils/timezone.util';
 
 @Injectable()
 export class AirportsService {
@@ -16,6 +18,10 @@ export class AirportsService {
   ) {}
 
   async create(dto: CreateAirportDto): Promise<AirportDocument> {
+    if (!isValidIanaTimeZone(dto.timeZone)) {
+      throw new BadRequestException(`Invalid IANA time zone: '${dto.timeZone}'`);
+    }
+
     const code = dto.iataCode.toUpperCase().trim();
     const existing = await this.airportModel.findOne({ iataCode: code });
 
@@ -28,7 +34,14 @@ export class AirportsService {
       iataCode: code,
     });
 
-    return created.save();
+    try {
+      return await created.save();
+    } catch (error: any) {
+      if (error?.code === 11000) {
+        throw new ConflictException(`Airport with IATA code '${code}' already exists`);
+      }
+      throw error;
+    }
   }
 
   async findAll(search?: string): Promise<AirportDocument[]> {

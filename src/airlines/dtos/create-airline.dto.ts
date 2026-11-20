@@ -52,17 +52,21 @@ export class CreateAirlineDto {
   @ApiProperty({ example: 'EgyptAir', description: 'Name of the airline' })
   @IsString()
   @IsNotEmpty()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   name: string;
 
   @ApiProperty({ example: 'MS', description: '2-letter IATA airline code' })
   @IsString()
   @Length(2, 3)
-  @Transform(({ value }) => value?.trim().toUpperCase())
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
   iataCode: string;
 
   @ApiProperty({ example: 'Egypt', description: 'Country of origin' })
   @IsString()
   @IsNotEmpty()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   country: string;
 
   @ApiPropertyOptional({ example: 'contact@egyptair.com', description: 'Official contact email' })

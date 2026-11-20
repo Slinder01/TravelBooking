@@ -3,6 +3,7 @@ import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsEmail,
+  IsNotEmpty,
   IsOptional,
   IsString,
   IsUrl,
@@ -13,18 +14,24 @@ export class UpdateAirlineDto {
   @ApiPropertyOptional({ example: 'EgyptAir', description: 'Updated airline name' })
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   name?: string;
 
   @ApiPropertyOptional({ example: 'MS', description: '2-letter IATA airline code' })
   @IsOptional()
   @IsString()
   @Length(2, 3)
-  @Transform(({ value }) => value?.trim().toUpperCase())
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
   iataCode?: string;
 
   @ApiPropertyOptional({ example: 'Egypt', description: 'Country of origin' })
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   country?: string;
 
   @ApiPropertyOptional({ example: 'support@egyptair.com', description: 'Official contact email' })

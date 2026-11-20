@@ -30,3 +30,14 @@ Design and implement the public one-way flight search endpoint (GET /api/flights
 How the output was used:
 Created SearchFlightsDto with class-validator decorators, implemented FlightsService.search() with in-memory cabin qualification and duration/price calculations, exposed a public GET /api/flights/search endpoint in FlightsController, and verified with automated unit tests.
 ================================================
+
+================================================
+Date: 2026-11-19
+Student: Team Member (sowerinchampion)
+Tool: Antigravity (Gemini)
+Related Requirement: FLT-04, FLT-05, FLT-06, FLT-12, FLT-15
+Prompt:
+Extend GET /api/flights/search to support round-trip searches (returnDate with same-day return timing filter) and price/airline filters, and implement moderator flight schedule update, flight cancellation, and cabin add/update endpoints with seat capacity invariants.
+How the output was used:
+Updated SearchFlightsDto and FlightsService.search() with round-trip outbound/return leg queries, minPrice/maxPrice/airline filters, and inactive-airline exclusion; added PATCH /api/flights/:id, POST /api/flights/:id/cancel, POST /api/flights/:id/cabins, and PATCH /api/flights/:id/cabins/:cabinId with airline ownership checks and seatCount >= bookedSeats + heldSeats validation, verified with unit tests.
+================================================
