@@ -12,27 +12,51 @@ import {
   IsString,
   Matches,
   Min,
+  registerDecorator,
   ValidateNested,
+  ValidationOptions,
 } from 'class-validator';
 import { IsCalendarDate } from '../../flights/dtos/search-flights.dto';
 
+function IsPastOrTodayDate(validationOptions?: ValidationOptions) {
+  return function (object: object, propertyName: string) {
+    registerDecorator({
+      name: 'isPastOrTodayDate',
+      target: object.constructor,
+      propertyName,
+      options: validationOptions,
+      validator: {
+        validate(value: unknown) {
+          if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+            return false;
+          }
+          const todayIso = new Date().toISOString().slice(0, 10);
+          return value <= todayIso;
+        },
+      },
+    });
+  };
+}
+
 export class PassengerDto {
   @ApiProperty({ example: 'Mariam' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
-  @Transform(({ value }) => value?.trim())
   firstName: string;
 
   @ApiProperty({ example: 'Hassan' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
-  @Transform(({ value }) => value?.trim())
   lastName: string;
 
   @ApiProperty({ example: 'A12345678' })
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
   @IsString()
   @IsNotEmpty()
-  @Transform(({ value }) => value?.trim().toUpperCase())
   passportNumber: string;
 
   @ApiProperty({ example: '1999-05-14', description: 'YYYY-MM-DD' })
@@ -43,12 +67,15 @@ export class PassengerDto {
   @IsCalendarDate({
     message: 'dateOfBirth must be a valid calendar date (YYYY-MM-DD)',
   })
+  @IsPastOrTodayDate({
+    message: 'dateOfBirth cannot be in the future',
+  })
   dateOfBirth: string;
 
   @ApiPropertyOptional({ example: 'Egyptian' })
   @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
-  @Transform(({ value }) => value?.trim())
   nationality?: string;
 }
 

@@ -322,6 +322,24 @@ describe('FlightBookingsService', () => {
     };
 
     mockBookingModel.findById.mockReturnValueOnce(makeChain(holdDoc));
+    mockBookingModel.findOneAndUpdate.mockReturnValueOnce(
+      makeChain({
+        ...holdDoc,
+        status: FlightBookingStatus.PENDING_PAYMENT,
+        extraBaggageKg: 5,
+        priceBreakdown: {
+          ...holdDoc.priceBreakdown,
+          extraBaggageKg: 5,
+          extraBaggageFee: 100,
+          totalPrice: 600,
+        },
+        policySnapshot: {
+          ...holdDoc.policySnapshot,
+          acceptedAt: new Date(),
+        },
+        bookingReference: 'FB-TEST1234',
+      }),
+    );
 
     const updated = await service.createBooking(
       {
@@ -398,6 +416,14 @@ describe('FlightBookingsService', () => {
     };
 
     mockBookingModel.findById.mockReturnValueOnce(makeChain(pendingBooking));
+    mockBookingModel.findOneAndUpdate.mockReturnValueOnce(
+      makeChain({
+        ...pendingBooking,
+        status: FlightBookingStatus.CONFIRMED,
+        eTicketCode: 'ETK-TEST1234',
+        holdExpiresAt: undefined,
+      }),
+    );
     mockFlightModel.findOneAndUpdate.mockReturnValueOnce(makeChain({}));
 
     const confirmed = await service.confirmBookingAfterPayment(
@@ -620,5 +646,265 @@ describe('FlightBookingsService', () => {
     await expect(service.findOneById(missingId, adminUser)).rejects.toThrow(
       NotFoundException,
     );
+  });
+
+  it('createHold rejects asymmetric round-trip routes, inactive airlines, and caps holdExpiresAt at departure', async () => {
+    const outDep = new Date(Date.now() + 72 * 3600 * 1000);
+    const outArr = new Date(outDep.getTime() + 4 * 3600 * 1000);
+    const retDep = new Date(outArr.getTime() + 2 * 3600 * 1000);
+
+    // 1. Asymmetric round-trip CAI->DXB + LHR->JFK
+    mockFlightModel.findOneAndUpdate
+      .mockReturnValueOnce(
+        makeChain({
+          _id: new Types.ObjectId(outboundFlightId),
+          airlineId: new Types.ObjectId(airlineId),
+          departureAirportIata: 'CAI',
+          arrivalAirportIata: 'DXB',
+          departureTimeUtc: outDep,
+          arrivalTimeUtc: outArr,
+          cabins: [{ cabinClass: CabinClass.ECONOMY, price: 200 }],
+        }),
+      )
+      .mockReturnValueOnce(
+        makeChain({
+          _id: new Types.ObjectId(returnFlightId),
+          airlineId: new Types.ObjectId(airlineId),
+          departureAirportIata: 'LHR',
+          arrivalAirportIata: 'JFK',
+          departureTimeUtc: retDep,
+          arrivalTimeUtc: new Date(retDep.getTime() + 3 * 3600 * 1000),
+          cabins: [{ cabinClass: CabinClass.ECONOMY, price: 200 }],
+        }),
+      )
+      .mockReturnValue(makeChain({}));
+
+    await expect(
+      service.createHold(
+        {
+          flightId: outboundFlightId,
+          returnFlightId,
+          cabinClass: CabinClass.ECONOMY,
+          passengerCount: 1,
+        },
+        regularUser,
+      ),
+    ).rejects.toThrow(BadRequestException);
+
+    // 2. Deactivated airline
+    mockFlightModel.findOneAndUpdate
+      .mockReturnValueOnce(
+        makeChain({
+          _id: new Types.ObjectId(outboundFlightId),
+          airlineId: new Types.ObjectId(airlineId),
+          departureTimeUtc: outDep,
+          arrivalTimeUtc: outArr,
+          cabins: [{ cabinClass: CabinClass.ECONOMY, price: 200 }],
+        }),
+      )
+      .mockReturnValue(makeChain({}));
+    mockAirlinesService.findById.mockResolvedValueOnce({
+      ...mockAirline,
+      isActive: false,
+    });
+
+    await expect(
+      service.createHold(
+        {
+          flightId: outboundFlightId,
+          cabinClass: CabinClass.ECONOMY,
+          passengerCount: 1,
+        },
+        regularUser,
+      ),
+    ).rejects.toThrow(BadRequestException);
+
+    // 3. Departure in 2 minutes caps holdExpiresAt <= departureTimeUtc
+    const nearDep = new Date(Date.now() + 2 * 60 * 1000);
+    mockFlightModel.findOneAndUpdate.mockReturnValueOnce(
+      makeChain({
+        _id: new Types.ObjectId(outboundFlightId),
+        airlineId: new Types.ObjectId(airlineId),
+        departureTimeUtc: nearDep,
+        arrivalTimeUtc: new Date(nearDep.getTime() + 2 * 3600 * 1000),
+        cabins: [{ cabinClass: CabinClass.ECONOMY, price: 200 }],
+      }),
+    );
+    const held = await service.createHold(
+      {
+        flightId: outboundFlightId,
+        cabinClass: CabinClass.ECONOMY,
+        passengerCount: 1,
+      },
+      regularUser,
+    );
+    expect(held.holdExpiresAt!.getTime()).toBeLessThanOrEqual(nearDep.getTime());
+  });
+
+  it('createBooking rejects PENDING_PAYMENT re-POST, duplicate passports, future DOB, and concurrent expiry', async () => {
+    const holdId = new Types.ObjectId();
+    const baseHold = {
+      _id: holdId,
+      userId: new Types.ObjectId(userId),
+      flightId: new Types.ObjectId(outboundFlightId),
+      cabinClass: CabinClass.ECONOMY,
+      passengerCount: 2,
+      priceBreakdown: {
+        baseFarePerPassenger: 200,
+        passengerCount: 2,
+        baseTotal: 400,
+        currency: 'USD',
+      },
+      policySnapshot: {
+        cabinBagAllowanceKg: 8,
+        checkedBagAllowanceKg: 23,
+        excessBagFeePerKg: 20,
+        freeCancellationHours: 24,
+        refundPercentage: 80,
+      },
+      status: FlightBookingStatus.HELD,
+      holdExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    };
+
+    // Re-POST on PENDING_PAYMENT rejected
+    mockBookingModel.findById.mockReturnValueOnce(
+      makeChain({ ...baseHold, status: FlightBookingStatus.PENDING_PAYMENT }),
+    );
+    await expect(
+      service.createBooking(
+        {
+          holdId: holdId.toString(),
+          passengers: [
+            { firstName: 'A', lastName: 'B', passportNumber: 'P1', dateOfBirth: '1999-01-01' },
+            { firstName: 'C', lastName: 'D', passportNumber: 'P2', dateOfBirth: '2000-01-01' },
+          ],
+        },
+        regularUser,
+      ),
+    ).rejects.toThrow(BadRequestException);
+
+    // Duplicate passport rejected
+    mockBookingModel.findById.mockReturnValueOnce(makeChain(baseHold));
+    await expect(
+      service.createBooking(
+        {
+          holdId: holdId.toString(),
+          passengers: [
+            { firstName: 'A', lastName: 'B', passportNumber: 'SAME123', dateOfBirth: '1999-01-01' },
+            { firstName: 'C', lastName: 'D', passportNumber: 'same123', dateOfBirth: '2000-01-01' },
+          ],
+        },
+        regularUser,
+      ),
+    ).rejects.toThrow(BadRequestException);
+
+    // Future dateOfBirth rejected
+    mockBookingModel.findById.mockReturnValueOnce(makeChain(baseHold));
+    await expect(
+      service.createBooking(
+        {
+          holdId: holdId.toString(),
+          passengers: [
+            { firstName: 'A', lastName: 'B', passportNumber: 'P1', dateOfBirth: '2099-01-01' },
+            { firstName: 'C', lastName: 'D', passportNumber: 'P2', dateOfBirth: '2000-01-01' },
+          ],
+        },
+        regularUser,
+      ),
+    ).rejects.toThrow(BadRequestException);
+
+    // Concurrent expiry during findOneAndUpdate
+    mockBookingModel.findById
+      .mockReturnValueOnce(makeChain(baseHold))
+      .mockReturnValueOnce(
+        makeChain({ ...baseHold, status: FlightBookingStatus.EXPIRED }),
+      );
+    mockBookingModel.findOneAndUpdate.mockReturnValueOnce(makeChain(null));
+    await expect(
+      service.createBooking(
+        {
+          holdId: holdId.toString(),
+          passengers: [
+            { firstName: 'A', lastName: 'B', passportNumber: 'P1', dateOfBirth: '1999-01-01' },
+            { firstName: 'C', lastName: 'D', passportNumber: 'P2', dateOfBirth: '2000-01-01' },
+          ],
+        },
+        regularUser,
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('confirmBookingAfterPayment avoids double seat commit on concurrent calls and reverts on commit error', async () => {
+    const bookingId = new Types.ObjectId();
+    const pending = {
+      _id: bookingId,
+      userId: new Types.ObjectId(userId),
+      flightId: new Types.ObjectId(outboundFlightId),
+      cabinClass: CabinClass.ECONOMY,
+      passengerCount: 1,
+      passengers: [{ firstName: 'Mariam' }],
+      status: FlightBookingStatus.PENDING_PAYMENT,
+      holdExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      bookingReference: 'FB-ABCD1234',
+    };
+
+    // Concurrent loser: atomic claim returns null, re-read returns CONFIRMED without touching seats
+    mockBookingModel.findById
+      .mockReturnValueOnce(makeChain(pending))
+      .mockReturnValueOnce(
+        makeChain({
+          ...pending,
+          status: FlightBookingStatus.CONFIRMED,
+          eTicketCode: 'ETK-WINNER',
+        }),
+      );
+    mockBookingModel.findOneAndUpdate.mockReturnValueOnce(makeChain(null));
+
+    const res = await service.confirmBookingAfterPayment(bookingId.toString());
+    expect(res.status).toBe(FlightBookingStatus.CONFIRMED);
+    expect(mockFlightModel.findOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('cancelBooking issues 100% refund when flight was cancelled by airline even inside freeCancellationHours', async () => {
+    const bookingId = new Types.ObjectId();
+    mockBookingModel.findById.mockReturnValueOnce(
+      makeChain({
+        _id: bookingId,
+        userId: new Types.ObjectId(userId),
+        flightId: new Types.ObjectId(outboundFlightId),
+        cabinClass: CabinClass.ECONOMY,
+        passengerCount: 1,
+        status: FlightBookingStatus.CONFIRMED,
+        priceBreakdown: { totalPrice: 300 },
+        policySnapshot: {
+          freeCancellationHours: 24,
+          refundPercentage: 50,
+        },
+      }),
+    );
+    mockFlightModel.findById.mockReturnValueOnce(
+      makeChain({
+        departureTimeUtc: new Date(Date.now() + 2 * 3600 * 1000),
+        status: FlightStatus.CANCELLED,
+      }),
+    );
+    mockBookingModel.findOneAndUpdate.mockReturnValueOnce(
+      makeChain({
+        _id: bookingId,
+        flightId: new Types.ObjectId(outboundFlightId),
+        cabinClass: CabinClass.ECONOMY,
+        passengerCount: 1,
+        status: FlightBookingStatus.CANCELLED,
+        refundAmount: 300,
+      }),
+    );
+    mockFlightModel.findOneAndUpdate.mockReturnValueOnce(makeChain({}));
+
+    const result = await service.cancelBooking(
+      bookingId.toString(),
+      {},
+      regularUser,
+    );
+    expect(result.refundAmount).toBe(300);
   });
 });

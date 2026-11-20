@@ -98,6 +98,16 @@ export class FlightBookingsService implements OnModuleInit, OnModuleDestroy {
         );
 
         if (
+          returnFlight.departureAirportIata !==
+            outboundFlight.arrivalAirportIata ||
+          returnFlight.arrivalAirportIata !== outboundFlight.departureAirportIata
+        ) {
+          throw new BadRequestException(
+            'Return flight origin and destination must match the outbound route in reverse',
+          );
+        }
+
+        if (
           returnFlight.departureTimeUtc.getTime() <=
           outboundFlight.arrivalTimeUtc.getTime()
         ) {
@@ -135,6 +145,25 @@ export class FlightBookingsService implements OnModuleInit, OnModuleDestroy {
       const airline = await this.airlinesService.findById(
         outboundFlight.airlineId.toString(),
       );
+      if (airline.isActive === false) {
+        throw new BadRequestException(
+          'Airline is currently inactive and cannot accept bookings',
+        );
+      }
+
+      if (
+        returnFlight &&
+        returnFlight.airlineId.toString() !== outboundFlight.airlineId.toString()
+      ) {
+        const returnAirline = await this.airlinesService.findById(
+          returnFlight.airlineId.toString(),
+        );
+        if (returnAirline.isActive === false) {
+          throw new BadRequestException(
+            'Return flight airline is currently inactive and cannot accept bookings',
+          );
+        }
+      }
 
       const baseFarePerPassenger =
         Math.round(
@@ -143,8 +172,9 @@ export class FlightBookingsService implements OnModuleInit, OnModuleDestroy {
       const baseTotal =
         Math.round(baseFarePerPassenger * dto.passengerCount * 100) / 100;
 
+      const rawHoldExpiryMs = Date.now() + HOLD_DURATION_MINUTES * 60 * 1000;
       const holdExpiresAt = new Date(
-        Date.now() + HOLD_DURATION_MINUTES * 60 * 1000,
+        Math.min(rawHoldExpiryMs, outboundFlight.departureTimeUtc.getTime()),
       );
 
       const booking = new this.flightBookingModel({
@@ -225,10 +255,7 @@ export class FlightBookingsService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    if (
-      hold.status !== FlightBookingStatus.HELD &&
-      hold.status !== FlightBookingStatus.PENDING_PAYMENT
-    ) {
+    if (hold.status !== FlightBookingStatus.HELD) {
       throw new BadRequestException(
         `Cannot submit booking details for a booking in '${hold.status}' status`,
       );
@@ -247,6 +274,24 @@ export class FlightBookingsService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
+    const normalizedPassports = dto.passengers.map((p) =>
+      p.passportNumber.trim().toUpperCase(),
+    );
+    if (new Set(normalizedPassports).size !== normalizedPassports.length) {
+      throw new BadRequestException(
+        'Duplicate passport numbers are not allowed in the same booking',
+      );
+    }
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    for (const passenger of dto.passengers) {
+      if (passenger.dateOfBirth > todayIso) {
+        throw new BadRequestException(
+          `Passenger dateOfBirth '${passenger.dateOfBirth}' cannot be in the future`,
+        );
+      }
+    }
+
     const extraBaggageKg = dto.extraBaggageKg ?? 0;
     const extraBaggageFee =
       Math.round(
@@ -255,28 +300,76 @@ export class FlightBookingsService implements OnModuleInit, OnModuleDestroy {
     const totalPrice =
       Math.round((hold.priceBreakdown.baseTotal + extraBaggageFee) * 100) / 100;
 
-    hold.passengers = dto.passengers;
-    hold.extraBaggageKg = extraBaggageKg;
-    hold.priceBreakdown = {
-      ...hold.priceBreakdown,
-      extraBaggageKg,
-      extraBaggageFee,
-      totalPrice,
-    };
+    const now = new Date();
+    const updated = await this.flightBookingModel
+      .findOneAndUpdate(
+        {
+          _id: hold._id,
+          status: FlightBookingStatus.HELD,
+          $or: [
+            { holdExpiresAt: { $exists: false } },
+            { holdExpiresAt: null },
+            { holdExpiresAt: { $gt: now } },
+          ],
+        },
+        {
+          $set: {
+            passengers: dto.passengers.map((p) => ({
+              firstName: p.firstName.trim(),
+              lastName: p.lastName.trim(),
+              passportNumber: p.passportNumber.trim().toUpperCase(),
+              dateOfBirth: p.dateOfBirth,
+              ...(p.nationality ? { nationality: p.nationality.trim() } : {}),
+            })),
+            extraBaggageKg,
+            priceBreakdown: {
+              baseFarePerPassenger: hold.priceBreakdown.baseFarePerPassenger,
+              passengerCount: hold.priceBreakdown.passengerCount,
+              baseTotal: hold.priceBreakdown.baseTotal,
+              extraBaggageKg,
+              extraBaggageFee,
+              totalPrice,
+              currency: hold.priceBreakdown.currency ?? 'USD',
+            },
+            ...(dto.acceptPolicies
+              ? {
+                  policySnapshot: {
+                    cabinBagAllowanceKg: hold.policySnapshot.cabinBagAllowanceKg,
+                    checkedBagAllowanceKg:
+                      hold.policySnapshot.checkedBagAllowanceKg,
+                    excessBagFeePerKg: hold.policySnapshot.excessBagFeePerKg,
+                    freeCancellationHours:
+                      hold.policySnapshot.freeCancellationHours,
+                    refundPercentage: hold.policySnapshot.refundPercentage,
+                    acceptedAt: now,
+                  },
+                }
+              : {}),
+            bookingReference: hold.bookingReference ?? this.generateCode('FB'),
+            status: FlightBookingStatus.PENDING_PAYMENT,
+          },
+        },
+        { new: true },
+      )
+      .exec();
 
-    if (dto.acceptPolicies) {
-      hold.policySnapshot = {
-        ...hold.policySnapshot,
-        acceptedAt: new Date(),
-      };
+    if (!updated) {
+      const latest = await this.flightBookingModel.findById(dto.holdId).exec();
+      if (
+        !latest ||
+        latest.status === FlightBookingStatus.EXPIRED ||
+        (latest.holdExpiresAt && latest.holdExpiresAt.getTime() <= Date.now())
+      ) {
+        throw new BadRequestException(
+          'Seat hold has expired; please create a new seat hold',
+        );
+      }
+      throw new ConflictException(
+        `Seat hold is no longer in '${FlightBookingStatus.HELD}' status`,
+      );
     }
 
-    if (!hold.bookingReference) {
-      hold.bookingReference = this.generateCode('FB');
-    }
-
-    hold.status = FlightBookingStatus.PENDING_PAYMENT;
-    return hold.save();
+    return updated;
   }
 
   /**
@@ -309,45 +402,107 @@ export class FlightBookingsService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
+    if (booking.holdExpiresAt && booking.holdExpiresAt.getTime() <= Date.now()) {
+      await this.releaseExpiredHolds();
+      throw new BadRequestException(
+        'Seat hold has expired; please create a new seat hold',
+      );
+    }
+
     if (booking.passengers.length !== booking.passengerCount) {
       throw new BadRequestException(
         'Passenger details must be submitted before confirming the booking',
       );
     }
 
-    await this.commitHeldSeatsAtomically(
-      booking.flightId.toString(),
-      booking.cabinClass,
-      booking.passengerCount,
-    );
+    const now = new Date();
+    const priorStatus = booking.status;
+    const priorHoldExpiresAt = booking.holdExpiresAt;
 
-    if (booking.returnFlightId && booking.returnCabinClass) {
-      try {
-        await this.commitHeldSeatsAtomically(
-          booking.returnFlightId.toString(),
-          booking.returnCabinClass,
-          booking.passengerCount,
-        );
-      } catch (error) {
-        await this.revertCommittedSeatsAtomically(
-          booking.flightId.toString(),
-          booking.cabinClass,
-          booking.passengerCount,
-        );
-        throw error;
+    // Atomically claim transition to CONFIRMED before moving seats so concurrent calls cannot double-commit
+    const claimed = await this.flightBookingModel
+      .findOneAndUpdate(
+        {
+          _id: booking._id,
+          status: {
+            $in: [FlightBookingStatus.HELD, FlightBookingStatus.PENDING_PAYMENT],
+          },
+          $or: [
+            { holdExpiresAt: { $exists: false } },
+            { holdExpiresAt: null },
+            { holdExpiresAt: { $gt: now } },
+          ],
+        },
+        {
+          $set: {
+            status: FlightBookingStatus.CONFIRMED,
+            bookingReference:
+              booking.bookingReference ?? this.generateCode('FB'),
+            eTicketCode: booking.eTicketCode ?? this.generateCode('ETK'),
+          },
+          $unset: { holdExpiresAt: 1 },
+        },
+        { new: true },
+      )
+      .exec();
+
+    if (!claimed) {
+      const latest = await this.flightBookingModel.findById(bookingId).exec();
+      if (latest?.status === FlightBookingStatus.CONFIRMED) {
+        return latest;
       }
+      if (latest?.status === FlightBookingStatus.EXPIRED) {
+        throw new BadRequestException(
+          'Seat hold has expired; please create a new seat hold',
+        );
+      }
+      throw new ConflictException(
+        'Booking state changed concurrently; please refresh and try again',
+      );
     }
 
-    booking.status = FlightBookingStatus.CONFIRMED;
-    booking.holdExpiresAt = undefined;
-    if (!booking.bookingReference) {
-      booking.bookingReference = this.generateCode('FB');
-    }
-    if (!booking.eTicketCode) {
-      booking.eTicketCode = this.generateCode('ETK');
+    try {
+      await this.commitHeldSeatsAtomically(
+        claimed.flightId.toString(),
+        claimed.cabinClass,
+        claimed.passengerCount,
+      );
+
+      if (claimed.returnFlightId && claimed.returnCabinClass) {
+        try {
+          await this.commitHeldSeatsAtomically(
+            claimed.returnFlightId.toString(),
+            claimed.returnCabinClass,
+            claimed.passengerCount,
+          );
+        } catch (error) {
+          await this.revertCommittedSeatsAtomically(
+            claimed.flightId.toString(),
+            claimed.cabinClass,
+            claimed.passengerCount,
+          );
+          throw error;
+        }
+      }
+    } catch (error) {
+      await this.flightBookingModel
+        .findOneAndUpdate(
+          {
+            _id: claimed._id,
+            status: FlightBookingStatus.CONFIRMED,
+          },
+          {
+            $set: {
+              status: priorStatus,
+              ...(priorHoldExpiresAt ? { holdExpiresAt: priorHoldExpiresAt } : {}),
+            },
+          },
+        )
+        .exec();
+      throw error;
     }
 
-    return booking.save();
+    return claimed;
   }
 
   /**
@@ -489,7 +644,7 @@ export class FlightBookingsService implements OnModuleInit, OnModuleDestroy {
     if (booking.status === FlightBookingStatus.CONFIRMED) {
       const flight = await this.flightModel
         .findById(booking.flightId)
-        .select('departureTimeUtc flightNumber')
+        .select('departureTimeUtc flightNumber status')
         .lean()
         .exec();
 
@@ -497,22 +652,39 @@ export class FlightBookingsService implements OnModuleInit, OnModuleDestroy {
         throw new NotFoundException('Associated outbound flight not found');
       }
 
+      let returnFlight: { status?: FlightStatus } | null = null;
+      if (booking.returnFlightId) {
+        returnFlight = await this.flightModel
+          .findById(booking.returnFlightId)
+          .select('status')
+          .lean()
+          .exec();
+      }
+
+      const cancelledByAirline =
+        flight.status === FlightStatus.CANCELLED ||
+        returnFlight?.status === FlightStatus.CANCELLED;
+
       const nowMs = Date.now();
       const departureMs = new Date(flight.departureTimeUtc).getTime();
-      if (departureMs <= nowMs) {
+      if (!cancelledByAirline && departureMs <= nowMs) {
         throw new BadRequestException(
           'Cannot cancel a flight booking after departure',
         );
       }
 
-      const hoursRemaining = (departureMs - nowMs) / (1000 * 60 * 60);
-      if (hoursRemaining >= booking.policySnapshot.freeCancellationHours) {
-        refundAmount =
-          Math.round(
-            booking.priceBreakdown.totalPrice *
-              (booking.policySnapshot.refundPercentage / 100) *
-              100,
-          ) / 100;
+      if (cancelledByAirline) {
+        refundAmount = booking.priceBreakdown.totalPrice;
+      } else {
+        const hoursRemaining = (departureMs - nowMs) / (1000 * 60 * 60);
+        if (hoursRemaining >= booking.policySnapshot.freeCancellationHours) {
+          refundAmount =
+            Math.round(
+              booking.priceBreakdown.totalPrice *
+                (booking.policySnapshot.refundPercentage / 100) *
+                100,
+            ) / 100;
+        }
       }
     }
 
