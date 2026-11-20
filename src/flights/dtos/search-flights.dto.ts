@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsInt,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
   Length,
@@ -11,6 +12,7 @@ import {
   Max,
   Min,
   registerDecorator,
+  ValidationArguments,
   ValidationOptions,
 } from 'class-validator';
 import { CabinClass } from '../schemas/flight.schema';
@@ -27,8 +29,9 @@ export function IsCalendarDate(validationOptions?: ValidationOptions) {
         validate(value: any) {
           return typeof value === 'string' && isValidCalendarDate(value);
         },
-        defaultMessage() {
-          return 'departureDate must be a valid real-world calendar date (YYYY-MM-DD)';
+        defaultMessage(args?: ValidationArguments) {
+          const field = args?.property || 'date';
+          return `${field} must be a valid real-world calendar date (YYYY-MM-DD)`;
         },
       },
     });
@@ -48,7 +51,9 @@ export class SearchFlightsDto {
   })
   @IsString()
   @Length(3, 3)
-  @Transform(({ value }) => value?.trim().toUpperCase())
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
   origin: string;
 
   @ApiProperty({
@@ -57,7 +62,9 @@ export class SearchFlightsDto {
   })
   @IsString()
   @Length(3, 3)
-  @Transform(({ value }) => value?.trim().toUpperCase())
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
   destination: string;
 
   @ApiProperty({
@@ -73,6 +80,18 @@ export class SearchFlightsDto {
   departureDate: string;
 
   @ApiPropertyOptional({
+    example: '2026-12-08',
+    description: 'Optional return date (YYYY-MM-DD) for round-trip searches (FLT-12)',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'returnDate must be in YYYY-MM-DD format',
+  })
+  @IsCalendarDate()
+  returnDate?: string;
+
+  @ApiPropertyOptional({
     example: 1,
     description: 'Number of passenger seats required (1 to 9, default: 1)',
     default: 1,
@@ -86,15 +105,50 @@ export class SearchFlightsDto {
 
   @ApiPropertyOptional({
     enum: CabinClass,
-    description: 'Optional cabin class filter. If omitted, all cabins with available seats are considered and priced at the cheapest qualifying cabin.',
+    description:
+      'Optional cabin class filter. If omitted, all cabins with available seats are considered and priced at the cheapest qualifying cabin.',
   })
   @IsOptional()
   @IsEnum(CabinClass)
   cabinClass?: CabinClass;
 
   @ApiPropertyOptional({
+    example: 100,
+    description: 'Optional minimum per-passenger cabin price filter (FLT-15)',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === '' || value === null || value === undefined ? undefined : Number(value),
+  )
+  @IsNumber()
+  @Min(0)
+  minPrice?: number;
+
+  @ApiPropertyOptional({
+    example: 800,
+    description: 'Optional maximum per-passenger cabin price filter (FLT-15)',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === '' || value === null || value === undefined ? undefined : Number(value),
+  )
+  @IsNumber()
+  @Min(0)
+  maxPrice?: number;
+
+  @ApiPropertyOptional({
+    example: 'MS',
+    description: 'Optional airline IATA code (e.g., MS) or airline ObjectId filter (FLT-15)',
+  })
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  airline?: string;
+
+  @ApiPropertyOptional({
     enum: FlightSortBy,
-    description: 'Sort criteria: price (lowest first), duration (shortest first), or departureTime (earliest first)',
+    description:
+      'Sort criteria: price (lowest first), duration (shortest first), or departureTime (earliest first)',
     default: FlightSortBy.PRICE,
   })
   @IsOptional()

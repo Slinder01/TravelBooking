@@ -40,4 +40,9 @@ Prompt:
 Design and implement the FlightBookings module with embedded Passenger subdocuments, policy/price snapshots, concurrency-safe atomic seat holds with automatic expiration release, passenger & extra-baggage booking creation, booking inspection, e-ticket generation, policy-based cancellations/refunds, and moderator passenger manifest export.
 How the output was used:
 Built FlightBooking schema with embedded Passenger, PriceBreakdown, and BookingPolicySnapshot subdocuments, used MongoDB atomic findOneAndUpdate with $expr/$filter and arrayFilters to prevent overselling under concurrent requests, added lazy + periodic hold expiration release, implemented endpoints for hold/create/list/detail/e-ticket/cancel and flight manifest export (JSON/CSV), exported cross-module helpers for ACC-12 and ACC-17, and verified with 13 unit tests and live MongoDB Atlas concurrency checks.
+Related Requirement: FLT-04, FLT-05, FLT-06, FLT-12, FLT-15
+Prompt:
+Extend GET /api/flights/search to support round-trip searches (returnDate with same-day return timing filter) and price/airline filters, and implement moderator flight schedule update, flight cancellation, and cabin add/update endpoints with seat capacity invariants.
+How the output was used:
+Updated SearchFlightsDto and FlightsService.search() with round-trip outbound/return leg queries, minPrice/maxPrice/airline filters, and inactive-airline exclusion; added PATCH /api/flights/:id, POST /api/flights/:id/cancel, POST /api/flights/:id/cabins, and PATCH /api/flights/:id/cabins/:cabinId with airline ownership checks and seatCount >= bookedSeats + heldSeats validation, verified with unit tests.
 ================================================

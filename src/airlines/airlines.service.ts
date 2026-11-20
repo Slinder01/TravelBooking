@@ -36,9 +36,11 @@ export class AirlinesService {
     const created = new this.airlineModel({
       ...dto,
       iataCode: dto.iataCode.toUpperCase().trim(),
+      baggagePolicy: dto.baggagePolicy ?? undefined,
+      cancellationPolicy: dto.cancellationPolicy ?? undefined,
     });
 
-    return created.save();
+    return this.saveWithConflictGuard(created);
   }
 
   async findAll(): Promise<AirlineDocument[]> {
@@ -95,7 +97,7 @@ export class AirlinesService {
     if (dto.logoUrl !== undefined) airline.logoUrl = dto.logoUrl;
     if (dto.isActive !== undefined) airline.isActive = dto.isActive;
 
-    return airline.save();
+    return this.saveWithConflictGuard(airline);
   }
 
   async updateBaggagePolicy(
@@ -133,6 +135,21 @@ export class AirlinesService {
     return airline.save();
   }
 
+  private async saveWithConflictGuard(
+    doc: AirlineDocument,
+  ): Promise<AirlineDocument> {
+    try {
+      return await doc.save();
+    } catch (error: any) {
+      if (error?.code === 11000) {
+        throw new ConflictException(
+          `Airline with IATA code '${doc.iataCode}' already exists`,
+        );
+      }
+      throw error;
+    }
+  }
+
   private assertModeratorOwnership(
     targetAirlineId: string,
     currentUser: AuthenticatedUser,
@@ -142,7 +159,10 @@ export class AirlinesService {
     }
 
     if (currentUser.role === UserRole.AIRLINE_MODERATOR) {
-      if (!currentUser.airlineId || currentUser.airlineId !== targetAirlineId) {
+      if (
+        !currentUser.airlineId ||
+        currentUser.airlineId.toLowerCase() !== targetAirlineId.toLowerCase()
+      ) {
         throw new ForbiddenException(
           'You are only authorized to manage your assigned airline',
         );
