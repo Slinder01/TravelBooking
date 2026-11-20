@@ -17,7 +17,9 @@ export class CreateFlightDto {
   @ApiProperty({ example: 'MS777', description: 'Flight identifier/number' })
   @IsString()
   @IsNotEmpty()
-  @Transform(({ value }) => value?.trim().toUpperCase())
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
   flightNumber: string;
 
   @ApiPropertyOptional({
@@ -31,13 +33,17 @@ export class CreateFlightDto {
   @ApiProperty({ example: 'CAI', description: '3-letter IATA departure airport code' })
   @IsString()
   @Length(3, 3)
-  @Transform(({ value }) => value?.trim().toUpperCase())
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
   departureAirportIata: string;
 
   @ApiProperty({ example: 'BER', description: '3-letter IATA arrival airport code' })
   @IsString()
   @Length(3, 3)
-  @Transform(({ value }) => value?.trim().toUpperCase())
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
   arrivalAirportIata: string;
 
   @ApiProperty({
