@@ -2,7 +2,7 @@ import { Controller, Get, Param, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { RefundsService } from './refunds.service';
 import { CurrentUser } from '../common/decorators/current-user/current-user.decorator';
-import { AuthUser } from '../common/auth-user';
+import type { AuthUser } from '../common/auth-user';
 import { JwtAuthGuard } from '../common/guards/jwt-auth/jwt-auth.guard';
 
 @ApiTags('Refunds')

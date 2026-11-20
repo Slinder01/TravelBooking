@@ -6,7 +6,7 @@ import { randomInt } from 'crypto';
 import { Payment } from './schemas/payment.schema';
 import { PolicyAcceptance } from './schemas/policy-acceptance.schema';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { AuthUser } from '../common/auth-user';
+import type { AuthUser } from '../common/auth-user';
 import { BOOKING_STATUS } from '../common/booking-status';
 import { UserRole } from '../users/users-role.enum';
 
@@ -25,7 +25,7 @@ export class PaymentsService {
   ) {}
 
   bookingModel(type: 'flight' | 'hotel'): Model<any> {
-    return this.conn.model(type === 'flight' ? 'FlightBooking' : 'HotelBooking');
+    return this.conn.model(type === 'flight' ? 'FlightBooking' : 'HotelBooking') as unknown as Model<any>;
   }
 
   async loadOwnedBooking(type: 'flight' | 'hotel', id: string, user: AuthUser) {

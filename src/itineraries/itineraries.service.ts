@@ -4,7 +4,7 @@ import { Model, Types } from 'mongoose';
 import { Itinerary } from './schemas/itinerary.schema';
 import { FxService } from './fx.service';
 import * as D from './dto/itinerary.dto';
-import { AuthUser } from '../common/auth-user';
+import type { AuthUser } from '../common/auth-user';
 
 const addDays = (d: Date, n: number) => { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x; };
 

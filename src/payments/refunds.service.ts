@@ -5,7 +5,7 @@ import Stripe from 'stripe';
 import { Payment } from './schemas/payment.schema';
 import { Refund } from './schemas/refund.schema';
 import { PaymentsService } from './payments.service';
-import { AuthUser } from '../common/auth-user';
+import type { AuthUser } from '../common/auth-user';
 import { BOOKING_STATUS } from '../common/booking-status';
 import { UserRole } from '../users/users-role.enum';
 

@@ -7,7 +7,7 @@ import { ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { ItinerariesService } from './itineraries.service';
 import * as D from './dto/itinerary.dto';
 import { CurrentUser } from '../common/decorators/current-user/current-user.decorator';
-import { AuthUser } from '../common/auth-user';
+import type { AuthUser } from '../common/auth-user';
 import { JwtAuthGuard } from '../common/guards/jwt-auth/jwt-auth.guard';
 
 const ALLOWED = ['image/jpeg', 'image/png', 'image/webp'];

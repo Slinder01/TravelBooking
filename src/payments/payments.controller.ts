@@ -4,7 +4,7 @@ import { Request } from 'express';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { CurrentUser } from '../common/decorators/current-user/current-user.decorator';
-import { AuthUser } from '../common/auth-user';
+import type { AuthUser } from '../common/auth-user';
 import { JwtAuthGuard } from '../common/guards/jwt-auth/jwt-auth.guard';   // teammate's guard, adjust the path
 
 enum BookingType { flight = 'flight', hotel = 'hotel' }
@@ -35,7 +35,7 @@ export class PaymentsController {
 
   // NO auth guard: Stripe calls this. Security = signature verification.
   @Post('payments/webhook')
-  webhook(@Req() req: RawBodyRequest<Request>, @Headers('stripe-signature') sig: string) {
+  webhook(@Req() req: any, @Headers('stripe-signature') sig: string) {
     return this.svc.handleWebhook(req.rawBody as Buffer, sig);
   }
 }
