@@ -6,6 +6,8 @@ import {
   HttpCode,
   HttpStatus,
   Patch,
+  Delete,
+  ConflictException,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -21,13 +23,20 @@ import { CurrentUser } from '../common/decorators/current-user/current-user.deco
 import type { AuthenticatedUser } from '../common/interfaces/authenticated-user.interface';
 import { UpdateProfileDto } from '../auth/dtos/update-profile.dto';
 import { UsersService } from './users.service';
+import { BookingService } from '../bookings/booking.service';
+import { ApiConflictResponse } from '@nestjs/swagger';
+import { FlightBookingsService } from '../flight-bookings/flight-bookings.service';
 
 @ApiTags('Users')
 @ApiCookieAuth('access_token')
 @Controller('users')
 @UseGuards(JwtAuthGuard)
 export class UsersController {
-  constructor(private readonly usersService: UsersService) {}
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly bookingService: BookingService,
+    private readonly flightBookingsService: FlightBookingsService,
+  ) {}
 
   @Get('me')
   @HttpCode(HttpStatus.OK)
@@ -82,5 +91,21 @@ export class UsersController {
         preferredCurrency: user.preferredCurrency,
       },
     };
+  }
+
+  @Delete('me')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Deactivate the current account (ACC-12)' })
+  @ApiOkResponse({ description: 'Account deactivated and personal profile data anonymized' })
+  @ApiConflictResponse({ description: 'Account has an upcoming confirmed hotel or flight booking' })
+  async deleteMyAccount(@CurrentUser() currentUser: AuthenticatedUser) {
+    const [hasHotelBooking, hasFlightBooking] = await Promise.all([
+      this.bookingService.hasUpcomingConfirmedBooking(currentUser.id),
+      this.flightBookingsService.hasUpcomingConfirmedBooking(currentUser.id),
+    ]);
+    if (hasHotelBooking || hasFlightBooking) {
+      throw new ConflictException('Cancel upcoming confirmed bookings before deactivating your account');
+    }
+    return this.usersService.deactivateAccount(currentUser.id);
   }
 }
