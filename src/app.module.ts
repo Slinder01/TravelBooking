@@ -1,3 +1,6 @@
+import { BlogModule } from './blog/blog.module';
+import { UploadsModule } from './uploads/uploads.module';
+
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -15,6 +18,8 @@ import { FlightBookingsModule } from './flight-bookings/flight-bookings.module';
 @Module({
   imports: [
     AuthModule,
+     BlogModule,
+  UploadsModule,
     AirlinesModule,
     AirportsModule,
     FlightsModule,
