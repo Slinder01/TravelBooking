@@ -46,3 +46,68 @@ Extend GET /api/flights/search to support round-trip searches (returnDate with s
 How the output was used:
 Updated SearchFlightsDto and FlightsService.search() with round-trip outbound/return leg queries, minPrice/maxPrice/airline filters, and inactive-airline exclusion; added PATCH /api/flights/:id, POST /api/flights/:id/cancel, POST /api/flights/:id/cabins, and PATCH /api/flights/:id/cabins/:cabinId with airline ownership checks and seatCount >= bookedSeats + heldSeats validation, verified with unit tests.
 ================================================
+================================================
+Date: 2026-11-05
+Student: Omar Nasr (Dead_Tac0Z)
+Tool: ChatGPT
+Related Requirement: ACC-01, ACC-04, ACC-05
+Prompt:
+How should registration and login be implemented in NestJS with MongoDB, including password hashing, validation, failed-login lockout, and safe handling of returnTo redirects?
+How the output was used:
+Implemented the authentication foundation with registration and login services, password hashing, failed-login tracking and temporary account lockout, plus safe same-site returnTo handling.
+================================================
+
+================================================
+Date: 2026-11-05
+Student: Omar Nasr (Dead_Tac0Z)
+Tool: ChatGPT
+Related Requirement: ACC-06, ACC-08, ACC-19
+Prompt:
+How should refresh, logout, change-password, and current-user endpoints work when access and refresh tokens must use secure HTTP-only cookies rather than browser storage?
+How the output was used:
+Added cookie-based login and refresh flows, logout and password-change behavior, current-user lookup, session expiry checks, and Swagger documentation for the authentication endpoints.
+================================================
+
+================================================
+Date: 2026-11-05
+Student: Omar Nasr (Dead_Tac0Z)
+Tool: ChatGPT
+Related Requirement: ACC-09, ACC-11, ACC-12
+Prompt:
+Suggest a User schema and profile API design for self-service profile updates and account deactivation. Explain how booking ownership and upcoming confirmed bookings should affect account deactivation.
+How the output was used:
+Implemented authenticated profile read/update endpoints and account deactivation with personal-data anonymization. Deactivation checks the user’s hotel and flight booking services and rejects the request when an upcoming confirmed booking exists. Booking detail and cancellation operations are scoped to the owning user.
+================================================
+
+================================================
+Date: 2026-11-18
+Student: Omar Nasr (Dead_Tac0Z)
+Tool: ChatGPT
+Related Requirement: ACC-13, ACC-14, ACC-15, ACC-16
+Prompt:
+Design the admin account-management API contract for creating airline and hotel moderators, listing and filtering accounts, suspending/reactivating accounts, and deactivating/reactivating providers. Include role checks, request/response examples, and Swagger documentation guidance.
+How the output was used:
+Added administrator-only moderator creation with provider assignment and a required temporary-password change, account listing and filtering, account suspension/reactivation, and airline/hotel provider activation controls.
+================================================
+
+================================================
+Date: 2026-11-19
+Student: Omar Nasr (Dead_Tac0Z)
+Tool: ChatGPT
+Related Requirement: ACC-07a, ACC-17, GEN-07
+Prompt:
+How should admin password resets, booking oversight, and audit-log access be exposed in a NestJS admin controller? Recommend which DTO fields should be full DTOs versus partial DTOs for create and patch operations.
+How the output was used:
+Added an admin password-reset endpoint, paginated hotel and flight booking listings, and a paginated audit-log endpoint. Audited admin actions include account access, moderator creation, password resets, account status changes, provider status changes, and content deletion. Create and patch DTOs use validation appropriate to their operations.
+================================================
+
+================================================
+Date: 2026-11-20
+Student: Omar Nasr (Dead_Tac0Z)
+Tool: ChatGPT
+Related Requirement: GEN-10
+Prompt:
+Create a clear API contract for administrator content deletion that can support the existing blog and review modules. Specify supported content types, authorization, response behavior, and cleanup of related records and uploaded files.
+How the output was used:
+Added DELETE /api/admin/content/:type/:id for blog posts, blog comments, and hotel reviews. Post deletion also removes dependent comments and likes and deletes associated uploaded image files. Successful deletions are recorded in the admin audit log.
+================================================

@@ -7,6 +7,7 @@ import {
   Query,
   UseGuards,
   Patch,
+  Delete,
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
@@ -43,6 +44,9 @@ import { ListAuditLogsQueryDto } from './dtos/list-audit-logs-query.dto';
 import { AuditLogService } from './audit-log.service';
 import * as bcrypt from 'bcrypt';
 import { FlightBookingsService } from '../../flight-bookings/flight-bookings.service';
+import { PostsService } from '../../blog/posts.service';
+import { CommentsService } from '../../blog/comments.service';
+import { ReviewService } from '../../reviews/review.service';
 
 @ApiTags('Administration')
 @ApiCookieAuth('access_token')
@@ -57,6 +61,9 @@ export class AdminController {
     private readonly bookingService: BookingService,
     private readonly auditLogService: AuditLogService,
     private readonly flightBookingsService: FlightBookingsService,
+    private readonly postsService: PostsService,
+    private readonly commentsService: CommentsService,
+    private readonly reviewService: ReviewService,
   ) {}
 
   @Get('dashboard')
@@ -229,6 +236,39 @@ export class AdminController {
       total,
       totalPages: Math.ceil(total / query.limit),
     };
+  }
+
+  @Delete('content/:type/:id')
+  @Roles(UserRole.ADMINISTRATOR)
+  @ApiOperation({ summary: 'Delete supported user content (GEN-10)' })
+  @ApiOkResponse({ description: 'Content and its dependent records/files were deleted' })
+  @ApiBadRequestResponse({ description: 'Unsupported content type' })
+  async deleteContent(
+    @Param('type') type: string,
+    @Param('id') id: string,
+    @CurrentUser() admin: AuthenticatedUser,
+  ) {
+    let result: { message: string };
+    switch (type) {
+      case 'post':
+        result = await this.postsService.adminRemove(id);
+        break;
+      case 'comment':
+        result = await this.commentsService.adminRemove(id);
+        break;
+      case 'hotel-review':
+        result = await this.reviewService.adminDeleteReview(id);
+        break;
+      default:
+        throw new BadRequestException('Supported content types: post, comment, hotel-review');
+    }
+    await this.auditLogService.record({
+      actorUserId: admin.id,
+      action: 'CONTENT_DELETED',
+      targetType: type,
+      targetId: id,
+    });
+    return result;
   }
 
   @Patch('accounts/:id/suspend')

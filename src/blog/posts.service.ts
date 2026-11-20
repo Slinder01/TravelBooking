@@ -226,6 +226,19 @@ export class PostsService {
     return { message: 'Post deleted successfully' };
   }
 
+  async adminRemove(id: string) {
+    this.assertValidId(id);
+    const post = await this.postModel.findById(id);
+    if (!post) throw new NotFoundException('Post not found');
+    await Promise.all([
+      this.commentModel.deleteMany({ post: post._id }),
+      this.likeModel.deleteMany({ post: post._id }),
+    ]);
+    await Promise.all(post.images.map((image) => this.uploads.deleteFile('posts', image.filename)));
+    await post.deleteOne();
+    return { message: 'Post deleted successfully' };
+  }
+
   // ---------- helpers ----------
   private assertValidId(id: string) {
     if (!isValidObjectId(id)) throw new NotFoundException('Post not found');

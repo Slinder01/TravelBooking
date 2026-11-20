@@ -67,6 +67,13 @@ export class ReviewService {
     return { message: 'Review deleted successfully' };
   }
 
+  async adminDeleteReview(reviewId: string): Promise<{ message: string }> {
+    const review = await this.reviewModel.findById(reviewId).exec();
+    if (!review) throw new NotFoundException('Review not found');
+    await this.reviewModel.deleteOne({ _id: reviewId }).exec();
+    return { message: 'Review deleted successfully' };
+  }
+
   async getHotelReviews(hotelId: string): Promise<Review[]> {
     return (this.reviewModel.find({ hotelId: hotelId as any } as any)
       .sort({ createdAt: -1 })

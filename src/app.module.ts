@@ -1,5 +1,7 @@
 import { BlogModule } from './blog/blog.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { PaymentsModule } from './payments/payments.module';
+import { ItinerariesModule } from './itineraries/itineraries.module';
 
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
@@ -20,6 +22,8 @@ import { FlightBookingsModule } from './flight-bookings/flight-bookings.module';
     AuthModule,
      BlogModule,
   UploadsModule,
+    PaymentsModule,
+    ItinerariesModule,
     AirlinesModule,
     AirportsModule,
     FlightsModule,
