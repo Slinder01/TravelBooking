@@ -1,6 +1,8 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { existsSync, unlinkSync } from 'fs';
+import { join } from 'path';
 import { Itinerary } from './schemas/itinerary.schema';
 import { FxService } from './fx.service';
 import * as D from './dto/itinerary.dto';
@@ -28,6 +30,7 @@ export class ItinerariesService {
 
   /** Finds the itinerary containing a given activity/budget id, then checks ownership. */
   private async findByChild(path: 'activities' | 'budgets', childId: string, user: AuthUser) {
+    if (!Types.ObjectId.isValid(childId)) throw new NotFoundException('Not found');
     const it: any = await this.model.findOne({ [`days.${path}._id`]: childId });
     if (!it) throw new NotFoundException('Not found');
     if (String(it.ownerId) !== user.id) throw new ForbiddenException('Not your itinerary');
@@ -135,6 +138,12 @@ export class ItinerariesService {
     const { it, child } = await this.findByChild('activities', actId, user);
     const img = child.images.id(imageId);
     if (!img) throw new NotFoundException('Image not found');
+    if (img.filename) {
+      const filepath = join(process.cwd(), 'uploads', img.filename);
+      if (existsSync(filepath)) {
+        try { unlinkSync(filepath); } catch { /* ignore */ }
+      }
+    }
     img.deleteOne(); await it.save(); return { deleted: true };
   }
 
@@ -166,6 +175,7 @@ export class ItinerariesService {
     await it.save(); return it.transportCosts[it.transportCosts.length - 1];
   }
   private async findTransport(tid: string, user: AuthUser) {
+    if (!Types.ObjectId.isValid(tid)) throw new NotFoundException('Transport cost not found');
     const it: any = await this.model.findOne({ 'transportCosts._id': tid });
     if (!it) throw new NotFoundException('Transport cost not found');
     if (String(it.ownerId) !== user.id) throw new ForbiddenException('Not your itinerary');
@@ -226,12 +236,14 @@ export class ItinerariesService {
   }
 
   async getPublic(id: string) {
+    if (!Types.ObjectId.isValid(id)) throw new NotFoundException('Public itinerary not found');
     const it = await this.model.findOne({ _id: id, visibility: 'public', isHidden: { $ne: true }, ownerDeactivated: { $ne: true } });
     if (!it) throw new NotFoundException('Public itinerary not found');
     return it;
   }
 
   async clone(id: string, user: AuthUser) {
+    if (!Types.ObjectId.isValid(id)) throw new NotFoundException('Public itinerary not found');
     const src: any = await this.model.findById(id);
     const isOwner = !!src && String(src.ownerId) === user.id;
     const visible = !!src && src.visibility === 'public' && !src.isHidden && !src.ownerDeactivated;

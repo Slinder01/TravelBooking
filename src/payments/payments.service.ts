@@ -4,6 +4,7 @@ import { Model, Types, type Connection } from 'mongoose';
 import Stripe from 'stripe';
 import { randomInt } from 'crypto';
 import { Payment } from './schemas/payment.schema';
+import { Refund } from './schemas/refund.schema';
 import { PolicyAcceptance } from './schemas/policy-acceptance.schema';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import type { AuthUser } from '../common/auth-user';
@@ -21,6 +22,7 @@ export class PaymentsService {
 
   constructor(
     @InjectModel(Payment.name) private paymentModel: Model<Payment>,
+    @InjectModel(Refund.name) private refundModel: Model<Refund>,
     @InjectModel(PolicyAcceptance.name) private acceptModel: Model<PolicyAcceptance>,
     @InjectConnection() private conn: Connection,
     private readonly flightBookingsService: FlightBookingsService,
@@ -106,6 +108,7 @@ export class PaymentsService {
   }
 
   async retry(paymentId: string, user: AuthUser) {
+    if (!Types.ObjectId.isValid(paymentId)) throw new NotFoundException('Payment not found');
     const p = await this.paymentModel.findById(paymentId);
     if (!p) throw new NotFoundException('Payment not found');
     if (String(p.userId) !== user.id) throw new ForbiddenException();
@@ -126,14 +129,19 @@ export class PaymentsService {
 
   // ---------- inspect (verifies with Stripe if still pending) ----------
   async get(paymentId: string, user: AuthUser) {
+    if (!Types.ObjectId.isValid(paymentId)) throw new NotFoundException('Payment not found');
     let p = await this.paymentModel.findById(paymentId);
     if (!p) throw new NotFoundException('Payment not found');
     if (String(p.userId) !== user.id && user.role !== UserRole.ADMINISTRATOR) throw new ForbiddenException();
     if (p.status === 'pending') {
-      const pi = await this.stripe.paymentIntents.retrieve(p.stripePaymentIntentId);
-      if (pi.status === 'succeeded') await this.onSucceeded(pi.id);
-      else if (pi.status === 'canceled') await this.onFailed(pi.id, 'Payment canceled');
-      p = await this.paymentModel.findById(paymentId);
+      try {
+        const pi = await this.stripe.paymentIntents.retrieve(p.stripePaymentIntentId);
+        if (pi.status === 'succeeded') await this.onSucceeded(pi.id);
+        else if (pi.status === 'canceled') await this.onFailed(pi.id, 'Payment canceled');
+        p = await this.paymentModel.findById(paymentId);
+      } catch {
+        /* Stripe retrieve failed, return local state */
+      }
     }
     return p;
   }
@@ -170,13 +178,31 @@ export class PaymentsService {
     if (p.bookingType === 'flight') {
       try {
         await this.flightBookingsService.confirmBookingAfterPayment(String(p.bookingId));
-      } catch (err) {
+      } catch (err: any) {
+        let refundId: string | undefined;
         try {
-          await this.stripe.refunds.create({ payment_intent: intentId });
+          const rf = await this.stripe.refunds.create({ payment_intent: intentId });
+          refundId = rf.id;
         } catch {
           /* ignore */
         }
-        throw err;
+        await this.paymentModel.updateOne(
+          { _id: p._id },
+          { status: 'failed', failureReason: `Seat confirmation failed: ${err?.message || 'inventory error'}` },
+        );
+        await this.refundModel.create({
+          paymentId: p._id,
+          bookingId: p.bookingId,
+          bookingType: p.bookingType,
+          userId: p.userId,
+          amount: p.amount,
+          currency: p.currency,
+          refundPercent: 100,
+          status: refundId ? 'succeeded' : 'pending',
+          stripeRefundId: refundId,
+          policyApplied: { reason: 'Automatic rollback due to seat confirmation failure' },
+        });
+        return;
       }
     } else {
       const reference = `BK-${new Date().getFullYear()}-${String(randomInt(0, 1_000_000)).padStart(6, '0')}`;
@@ -185,7 +211,29 @@ export class PaymentsService {
         { status: BOOKING_STATUS.CONFIRMED, bookingReference: reference },
       );
       if (res.modifiedCount === 0) {
-        await this.stripe.refunds.create({ payment_intent: intentId });
+        let refundId: string | undefined;
+        try {
+          const rf = await this.stripe.refunds.create({ payment_intent: intentId });
+          refundId = rf.id;
+        } catch {
+          /* ignore */
+        }
+        await this.paymentModel.updateOne(
+          { _id: p._id },
+          { status: 'failed', failureReason: 'Booking confirmation failed; auto-refund initiated' },
+        );
+        await this.refundModel.create({
+          paymentId: p._id,
+          bookingId: p.bookingId,
+          bookingType: p.bookingType,
+          userId: p.userId,
+          amount: p.amount,
+          currency: p.currency,
+          refundPercent: 100,
+          status: refundId ? 'succeeded' : 'pending',
+          stripeRefundId: refundId,
+          policyApplied: { reason: 'Automatic rollback: booking could not be confirmed' },
+        });
       }
     }
   }

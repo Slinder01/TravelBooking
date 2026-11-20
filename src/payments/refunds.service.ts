@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import Stripe from 'stripe';
 import { Payment } from './schemas/payment.schema';
 import { Refund } from './schemas/refund.schema';
@@ -111,6 +111,7 @@ export class RefundsService {
   }
 
   async get(id: string, user: AuthUser) {
+    if (!Types.ObjectId.isValid(id)) throw new NotFoundException('Refund not found');
     const r = await this.refundModel.findById(id);
     if (!r) throw new NotFoundException('Refund not found');
     if (String(r.userId) !== user.id && user.role !== UserRole.ADMINISTRATOR) throw new ForbiddenException();

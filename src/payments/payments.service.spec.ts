@@ -5,6 +5,7 @@ import { ForbiddenException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { PaymentsService } from './payments.service';
 import { Payment } from './schemas/payment.schema';
+import { Refund } from './schemas/refund.schema';
 import { PolicyAcceptance } from './schemas/policy-acceptance.schema';
 import { FlightBookingsService } from '../flight-bookings/flight-bookings.service';
 import { BOOKING_STATUS } from '../common/booking-status';
@@ -42,12 +43,21 @@ describe('PaymentsService', () => {
     exec: jest.fn().mockResolvedValue(value),
   });
 
+  let mockRefundModel: any;
+
   beforeEach(async () => {
     mockPaymentModel = {
       findById: jest.fn().mockReturnValue(makeChain(null)),
       findOne: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockImplementation((doc: any) => Promise.resolve({ ...doc, _id: new Types.ObjectId() })),
       findOneAndUpdate: jest.fn().mockResolvedValue(null),
+      updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
+    };
+
+    mockRefundModel = {
+      create: jest.fn().mockImplementation((doc: any) => Promise.resolve({ ...doc, _id: new Types.ObjectId() })),
+      findById: jest.fn().mockReturnValue(makeChain(null)),
+      findOne: jest.fn().mockResolvedValue(null),
     };
 
     mockAcceptModel = {
@@ -76,6 +86,7 @@ describe('PaymentsService', () => {
       providers: [
         PaymentsService,
         { provide: getModelToken(Payment.name), useValue: mockPaymentModel },
+        { provide: getModelToken(Refund.name), useValue: mockRefundModel },
         { provide: getModelToken(PolicyAcceptance.name), useValue: mockAcceptModel },
         { provide: getConnectionToken(), useValue: mockConnection },
         { provide: FlightBookingsService, useValue: mockFlightBookingsService },
