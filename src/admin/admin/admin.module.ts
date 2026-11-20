@@ -10,6 +10,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AuditLog, AuditLogSchema } from './schemas/audit-log.schema';
 import { AuditLogService } from './audit-log.service';
 import { AdminSeederService } from './admin-seeder.service';
+import { FlightBookingsModule } from '../../flight-bookings/flight-bookings.module';
 @Module({
   imports: [
     AuthModule,
@@ -17,6 +18,7 @@ import { AdminSeederService } from './admin-seeder.service';
     AirlinesModule,
     HotelModule,
     BookingModule,
+    FlightBookingsModule,
     MongooseModule.forFeature([{ name: AuditLog.name, schema: AuditLogSchema }]),
   ],
   controllers: [AdminController],

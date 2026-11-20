@@ -42,6 +42,7 @@ import { ListBookingsQueryDto } from './dtos/list-bookings-query.dto';
 import { ListAuditLogsQueryDto } from './dtos/list-audit-logs-query.dto';
 import { AuditLogService } from './audit-log.service';
 import * as bcrypt from 'bcrypt';
+import { FlightBookingsService } from '../../flight-bookings/flight-bookings.service';
 
 @ApiTags('Administration')
 @ApiCookieAuth('access_token')
@@ -55,6 +56,7 @@ export class AdminController {
     private readonly hotelService: HotelService,
     private readonly bookingService: BookingService,
     private readonly auditLogService: AuditLogService,
+    private readonly flightBookingsService: FlightBookingsService,
   ) {}
 
   @Get('dashboard')
@@ -188,26 +190,29 @@ export class AdminController {
 
   @Get('bookings')
   @Roles(UserRole.ADMINISTRATOR)
-  @ApiOperation({ summary: 'List paginated hotel bookings (ACC-17)' })
-  @ApiOkResponse({ description: 'Paginated bookings with user, hotel, and room summaries' })
+  @ApiOperation({ summary: 'List paginated hotel and flight bookings (ACC-17)' })
+  @ApiOkResponse({ description: 'Paginated hotel and flight booking collections with user and service summaries' })
   async listBookings(
     @Query() query: ListBookingsQueryDto,
     @CurrentUser() admin: AuthenticatedUser,
   ) {
-    const { items, total } = await this.bookingService.listAllBookings(query);
+    const [hotel, flight] = await Promise.all([
+      this.bookingService.listAllBookings(query),
+      this.flightBookingsService.listAllBookings(query),
+    ]);
     await this.auditLogService.record({
       actorUserId: admin.id,
       action: 'BOOKINGS_LISTED',
       targetType: 'booking_collection',
-      targetId: 'hotel',
+      targetId: 'all',
       metadata: { page: query.page, limit: query.limit, status: query.status },
     });
     return {
-      items,
+      hotelBookings: hotel.items,
+      flightBookings: flight.items,
       page: query.page,
       limit: query.limit,
-      total,
-      totalPages: Math.ceil(total / query.limit),
+      totals: { hotel: hotel.total, flight: flight.total },
     };
   }
 
