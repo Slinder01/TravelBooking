@@ -54,6 +54,18 @@ export class CommentsService {
     return { message: 'Comment deleted successfully' };
   }
 
+  async adminRemove(id: string) {
+    if (!isValidObjectId(id)) throw new NotFoundException('Comment not found');
+    const comment = await this.commentModel.findById(id);
+    if (!comment) throw new NotFoundException('Comment not found');
+    await comment.deleteOne();
+    await this.postModel.updateOne(
+      { _id: comment.post, commentCount: { $gt: 0 } },
+      { $inc: { commentCount: -1 } },
+    );
+    return { message: 'Comment deleted successfully' };
+  }
+
   private async getOwned(id: string, userId: string) {
     if (!isValidObjectId(id)) throw new NotFoundException('Comment not found');
     const comment = await this.commentModel.findById(id);
