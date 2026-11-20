@@ -11,6 +11,8 @@ import { AuditLog, AuditLogSchema } from './schemas/audit-log.schema';
 import { AuditLogService } from './audit-log.service';
 import { AdminSeederService } from './admin-seeder.service';
 import { FlightBookingsModule } from '../../flight-bookings/flight-bookings.module';
+import { BlogModule } from '../../blog/blog.module';
+import { ReviewModule } from '../../reviews/review.module';
 @Module({
   imports: [
     AuthModule,
@@ -19,6 +21,8 @@ import { FlightBookingsModule } from '../../flight-bookings/flight-bookings.modu
     HotelModule,
     BookingModule,
     FlightBookingsModule,
+    BlogModule,
+    ReviewModule,
     MongooseModule.forFeature([{ name: AuditLog.name, schema: AuditLogSchema }]),
   ],
   controllers: [AdminController],

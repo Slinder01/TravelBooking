@@ -14,5 +14,6 @@ import { Booking, BookingSchema } from '../hotels/schemas/booking.schema';
   ],
   controllers: [ReviewController],
   providers: [ReviewService],
+  exports: [ReviewService],
 })
 export class ReviewModule {}
