@@ -3,6 +3,8 @@
 /node_modules
 /build
 
+/uploads/
+
 # TypeScript build cache
 *.tsbuildinfo
 

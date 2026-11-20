@@ -1,3 +1,6 @@
+import { BlogModule } from './blog/blog.module';
+import { UploadsModule } from './uploads/uploads.module';
+
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
@@ -9,6 +12,8 @@ import { CommonModule } from './common/common.module';
 @Module({
   imports: [
     AuthModule,
+     BlogModule,
+  UploadsModule,
     ConfigModule.forRoot({
       isGlobal: true,
     }),
