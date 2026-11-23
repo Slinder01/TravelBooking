@@ -26,6 +26,6 @@ import { Post, PostSchema } from './schemas/post.schema';
   ],
   controllers: [PostsController, TagsController, CommentsController, LikesController, AuthorsController],
   providers: [PostsService, CommentsService, LikesService, AuthorsService],
-  exports: [PostsService],
+  exports: [PostsService, CommentsService],
 })
 export class BlogModule {}
