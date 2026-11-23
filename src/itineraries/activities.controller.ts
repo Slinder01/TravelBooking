@@ -1,31 +1,28 @@
-import { Body, Controller, Delete, Param, Patch, Post, UploadedFile, UseGuards, UseInterceptors, BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Param,
+  Patch,
+  Post,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
-import { existsSync, mkdirSync } from 'fs';
-import { randomUUID } from 'crypto';
-import { ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { ApiBody, ApiConsumes, ApiCookieAuth, ApiTags } from '@nestjs/swagger';
 import { ItinerariesService } from './itineraries.service';
 import * as D from './dto/itinerary.dto';
 import { CurrentUser } from '../common/decorators/current-user/current-user.decorator';
 import type { AuthUser } from '../common/auth-user';
 import { JwtAuthGuard } from '../common/guards/jwt-auth/jwt-auth.guard';
+import { imageUploadOptions } from '../uploads/image-uploads.options';
 
-const ALLOWED = ['image/jpeg', 'image/png', 'image/webp'];
-export const imageUpload = FileInterceptor('file', {
-  storage: diskStorage({
-    destination: (_r, _f, cb) => {
-      const dir = './uploads';
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-      cb(null, dir);
-    },
-    filename: (_r, f, cb) => cb(null, `${randomUUID()}${extname(f.originalname).toLowerCase()}`),
-  }),
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (_r, f, cb) => ALLOWED.includes(f.mimetype) ? cb(null, true) : cb(new BadRequestException('Only JPEG, PNG or WEBP images allowed'), false),
-});
+export const imageUpload = FileInterceptor('file', imageUploadOptions('itineraries'));
 
 @ApiTags('Itinerary children')
+@ApiCookieAuth('access_token')
 @UseGuards(JwtAuthGuard)
 @Controller()
 export class ActivitiesController {

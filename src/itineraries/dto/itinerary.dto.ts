@@ -1,5 +1,22 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { IsArray, IsDateString, IsEnum, IsIn, IsMongoId, IsNotEmpty, IsNumber, IsOptional, IsString, Length, Min, Matches, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsDateString,
+  IsEnum,
+  IsIn,
+  IsInt,
+  IsMongoId,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Length,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { BUDGET_CATEGORIES } from '../schemas/itinerary.schema';
 
 export class CreateItineraryDto {
@@ -10,10 +27,44 @@ export class CreateItineraryDto {
 }
 export class UpdateItineraryDto extends PartialType(CreateItineraryDto) {}
 
+export class ListItinerariesQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @ApiPropertyOptional({ default: 10, minimum: 1, maximum: 50 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  limit?: number = 10;
+}
+
+export class PublicSearchItinerariesDto extends ListItinerariesQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  q?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @ApiPropertyOptional({ enum: ['newest', 'oldest'], default: 'newest' })
+  @IsOptional()
+  @IsIn(['newest', 'oldest'])
+  sort?: 'newest' | 'oldest';
+}
+
 export class CreateDayDto {
   @ApiProperty() @IsString() @IsNotEmpty() city: string;
   @ApiPropertyOptional({ description: '1-based position to insert at; default = append' })
-  @IsOptional() @IsNumber() @Min(1) position?: number;
+  @IsOptional() @IsInt() @Min(1) position?: number;
 }
 export class UpdateDayDto { @ApiPropertyOptional() @IsOptional() @IsString() @IsNotEmpty() city?: string; }
 export class ReorderDaysDto { @ApiProperty({ type: [String] }) @IsArray() @IsMongoId({ each: true }) dayIds: string[]; }

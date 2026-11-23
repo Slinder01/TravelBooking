@@ -5,9 +5,13 @@ import { ItinerariesService } from './itineraries.service';
 import { ItinerariesController } from './itineraries.controller';
 import { ActivitiesController } from './activities.controller';
 import { FxService } from './fx.service';
+import { UploadsModule } from '../uploads/uploads.module';
 
 @Module({
-  imports: [MongooseModule.forFeature([{ name: Itinerary.name, schema: ItinerarySchema }])],
+  imports: [
+    MongooseModule.forFeature([{ name: Itinerary.name, schema: ItinerarySchema }]),
+    UploadsModule,
+  ],
   controllers: [ItinerariesController, ActivitiesController],
   providers: [ItinerariesService, FxService],
   exports: [ItinerariesService, FxService],

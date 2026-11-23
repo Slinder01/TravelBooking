@@ -1,4 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Model, Types, type Connection } from 'mongoose';
 import Stripe from 'stripe';
@@ -27,6 +34,12 @@ export class PaymentsService {
     @InjectConnection() private conn: Connection,
     private readonly flightBookingsService: FlightBookingsService,
   ) {}
+
+  private assertNotGuest(user: AuthUser) {
+    if (user.role === UserRole.GUEST) {
+      throw new ForbiddenException('A registered account is required for payments');
+    }
+  }
 
   bookingModel(type: 'flight' | 'hotel'): Model<any> {
     if (type === 'flight') {
@@ -57,6 +70,7 @@ export class PaymentsService {
   }
 
   async acceptPolicies(type: 'flight' | 'hotel', id: string, user: AuthUser) {
+    this.assertNotGuest(user);
     const b = await this.loadOwnedBooking(type, id, user);
     const policySnapshot =
       type === 'flight'
@@ -71,6 +85,7 @@ export class PaymentsService {
 
   // ---------- PAY-01: create payment ----------
   async create(dto: CreatePaymentDto, user: AuthUser) {
+    this.assertNotGuest(user);
     const b = await this.loadOwnedBooking(dto.bookingType, dto.bookingId, user);
     if (b.status !== BOOKING_STATUS.PENDING_PAYMENT && b.status !== 'pending') {
       throw new BadRequestException(`Booking is ${b.status}, cannot pay`);
@@ -84,15 +99,45 @@ export class PaymentsService {
       throw new BadRequestException('You must accept the policies before paying');
     }
 
-    const existing = await this.paymentModel.findOne({ bookingId: b._id, status: 'pending' });
-    if (existing) {
-      const pi = await this.stripe.paymentIntents.retrieve(existing.stripePaymentIntentId);
-      return { payment: existing, clientSecret: pi.client_secret };
+    const rawAmount = Number(b.priceBreakdown?.totalPrice ?? b.totalPrice ?? b.amount ?? 0);
+    if (!Number.isFinite(rawAmount) || rawAmount <= 0) {
+      throw new BadRequestException('Booking has no valid payable amount');
     }
-
-    const rawAmount = b.priceBreakdown?.totalPrice ?? b.totalPrice ?? b.amount ?? 0;
     const rawCurrency = b.priceBreakdown?.currency ?? b.currency ?? 'USD';
     const currency = String(rawCurrency).toUpperCase();
+
+    const existing = await this.paymentModel.findOne({
+      bookingType: dto.bookingType,
+      bookingId: b._id,
+      status: { $in: ['pending', 'processing'] },
+    });
+    if (existing) {
+      if (existing.status === 'processing') {
+        throw new ConflictException('Payment is currently being processed');
+      }
+      const pi = await this.stripe.paymentIntents.retrieve(existing.stripePaymentIntentId);
+      if (pi.status === 'succeeded') {
+        await this.onSucceeded(pi.id);
+        throw new ConflictException('Booking has already been paid');
+      }
+      const isStale =
+        pi.status === 'canceled' ||
+        existing.amount !== rawAmount ||
+        existing.currency !== currency;
+      if (!isStale) {
+        return { payment: existing, clientSecret: pi.client_secret };
+      }
+      await this.paymentModel.updateOne(
+        { _id: existing._id, status: 'pending' },
+        {
+          status: 'failed',
+          failureReason:
+            pi.status === 'canceled'
+              ? 'Payment intent canceled'
+              : 'Superseded by updated booking total',
+        },
+      );
+    }
 
     const intent = await this.stripe.paymentIntents.create({
       amount: toMinor(rawAmount, currency),
@@ -100,23 +145,56 @@ export class PaymentsService {
       automatic_payment_methods: { enabled: true },
       metadata: { bookingId: String(b._id), bookingType: dto.bookingType, userId: user.id },
     });
-    const payment = await this.paymentModel.create({
-      userId: b.userId, bookingType: dto.bookingType, bookingId: b._id,
-      amount: rawAmount, currency, stripePaymentIntentId: intent.id,
-    });
-    return { payment, clientSecret: intent.client_secret };
+    try {
+      const payment = await this.paymentModel.create({
+        userId: b.userId, bookingType: dto.bookingType, bookingId: b._id,
+        amount: rawAmount, currency, stripePaymentIntentId: intent.id,
+      });
+      return { payment, clientSecret: intent.client_secret };
+    } catch (err: any) {
+      if (err?.code === 11000) {
+        try {
+          await this.stripe.paymentIntents.cancel?.(intent.id);
+        } catch {
+          /* ignore */
+        }
+        throw new ConflictException('A payment is already in progress for this booking');
+      }
+      throw err;
+    }
   }
 
   async retry(paymentId: string, user: AuthUser) {
+    this.assertNotGuest(user);
     if (!Types.ObjectId.isValid(paymentId)) throw new NotFoundException('Payment not found');
     const p = await this.paymentModel.findById(paymentId);
     if (!p) throw new NotFoundException('Payment not found');
     if (String(p.userId) !== user.id) throw new ForbiddenException();
     if (p.status !== 'failed') throw new BadRequestException('Only failed payments can be retried');
+
+    if (p.bookingType === 'flight' && typeof this.flightBookingsService.releaseExpiredHolds === 'function') {
+      await this.flightBookingsService.releaseExpiredHolds();
+    }
+
     const b = await this.loadOwnedBooking(p.bookingType, String(p.bookingId), user);
+    const retryableStatuses: string[] = [
+      BOOKING_STATUS.PENDING_PAYMENT,
+      BOOKING_STATUS.PAYMENT_FAILED,
+      'pending',
+    ];
+    if (!retryableStatuses.includes(String(b.status))) {
+      throw new BadRequestException(`Booking is ${b.status}, cannot retry payment`);
+    }
     if (b.holdExpiresAt && b.holdExpiresAt < new Date()) throw new BadRequestException('Hold expired, create a new booking');
-    // Teammate's booking must still be payable. If you set PaymentFailed on failure, re-open it here:
-    await this.bookingModel(p.bookingType).updateOne({ _id: b._id, status: BOOKING_STATUS.PAYMENT_FAILED }, { status: BOOKING_STATUS.PENDING_PAYMENT });
+
+    // Re-open hotel bookings if previously marked PAYMENT_FAILED
+    if (b.status === BOOKING_STATUS.PAYMENT_FAILED) {
+      await this.bookingModel(p.bookingType).updateOne(
+        { _id: b._id, status: BOOKING_STATUS.PAYMENT_FAILED },
+        { status: BOOKING_STATUS.PENDING_PAYMENT },
+      );
+    }
+
     const intent = await this.stripe.paymentIntents.create({
       amount: toMinor(p.amount, p.currency), currency: p.currency.toLowerCase(),
       automatic_payment_methods: { enabled: true },
@@ -148,13 +226,13 @@ export class PaymentsService {
 
   // ---------- webhook ----------
   async handleWebhook(rawBody: Buffer, signature: string) {
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      throw new ServiceUnavailableException('Stripe webhook secret is not configured');
+    }
     let event: Stripe.Event;
     try {
-      event = this.stripe.webhooks.constructEvent(
-        rawBody,
-        signature,
-        process.env.STRIPE_WEBHOOK_SECRET || 'whsec_dummy',
-      );
+      event = this.stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
     } catch {
       throw new BadRequestException('Invalid webhook signature');
     }
@@ -163,14 +241,18 @@ export class PaymentsService {
     } else if (event.type === 'payment_intent.payment_failed') {
       const pi = event.data.object as Stripe.PaymentIntent;
       await this.onFailed(pi.id, pi.last_payment_error?.message ?? 'Payment failed');
+    } else if (event.type === 'payment_intent.canceled') {
+      const pi = event.data.object as Stripe.PaymentIntent;
+      await this.onFailed(pi.id, 'Payment canceled');
     }
     return { received: true };
   }
 
   private async onSucceeded(intentId: string) {
+    // Atomically lock payment in 'processing'; terminal states ('succeeded', 'refunded') and active 'processing' are skipped
     const p = await this.paymentModel.findOneAndUpdate(
-      { stripePaymentIntentId: intentId, status: { $ne: 'succeeded' } },   // idempotent
-      { status: 'succeeded', paidAt: new Date() },
+      { stripePaymentIntentId: intentId, status: { $in: ['pending', 'failed'] } },
+      { status: 'processing' },
       { new: true },
     );
     if (!p) return;
@@ -178,6 +260,10 @@ export class PaymentsService {
     if (p.bookingType === 'flight') {
       try {
         await this.flightBookingsService.confirmBookingAfterPayment(String(p.bookingId));
+        await this.paymentModel.updateOne(
+          { _id: p._id },
+          { status: 'succeeded', paidAt: new Date(), $unset: { failureReason: 1 } },
+        );
       } catch (err: any) {
         let refundId: string | undefined;
         try {
@@ -188,7 +274,7 @@ export class PaymentsService {
         }
         await this.paymentModel.updateOne(
           { _id: p._id },
-          { status: 'failed', failureReason: `Seat confirmation failed: ${err?.message || 'inventory error'}` },
+          { status: 'refunded', failureReason: `Seat confirmation failed: ${err?.message || 'inventory error'}` },
         );
         await this.refundModel.create({
           paymentId: p._id,
@@ -220,7 +306,7 @@ export class PaymentsService {
         }
         await this.paymentModel.updateOne(
           { _id: p._id },
-          { status: 'failed', failureReason: 'Booking confirmation failed; auto-refund initiated' },
+          { status: 'refunded', failureReason: 'Booking confirmation failed; auto-refund initiated' },
         );
         await this.refundModel.create({
           paymentId: p._id,
@@ -234,6 +320,11 @@ export class PaymentsService {
           stripeRefundId: refundId,
           policyApplied: { reason: 'Automatic rollback: booking could not be confirmed' },
         });
+      } else {
+        await this.paymentModel.updateOne(
+          { _id: p._id },
+          { status: 'succeeded', paidAt: new Date(), $unset: { failureReason: 1 } },
+        );
       }
     }
   }
@@ -241,11 +332,17 @@ export class PaymentsService {
   private async onFailed(intentId: string, reason: string) {
     const p = await this.paymentModel.findOneAndUpdate(
       { stripePaymentIntentId: intentId, status: 'pending' },
-      { status: 'failed', failureReason: reason }, { new: true },
+      { status: 'failed', failureReason: reason },
+      { new: true },
     );
     if (!p) return;
-    await this.bookingModel(p.bookingType).updateOne(
-      { _id: p.bookingId, status: BOOKING_STATUS.PENDING_PAYMENT }, { status: BOOKING_STATUS.PAYMENT_FAILED });
-    // TODO: release inventory (call teammate's release method) + notification
+    // Keep FlightBooking in PENDING_PAYMENT so FlightBookingsService.releaseExpiredHolds()
+    // can automatically reclaim heldSeats when holdExpiresAt passes while still allowing retry().
+    if (p.bookingType !== 'flight') {
+      await this.bookingModel(p.bookingType).updateOne(
+        { _id: p.bookingId, status: { $in: [BOOKING_STATUS.PENDING_PAYMENT, 'pending'] } },
+        { status: BOOKING_STATUS.PAYMENT_FAILED },
+      );
+    }
   }
 }

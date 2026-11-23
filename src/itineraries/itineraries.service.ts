@@ -1,23 +1,93 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { existsSync, unlinkSync } from 'fs';
-import { join } from 'path';
+import { copyFileSync, existsSync, mkdirSync, unlinkSync } from 'fs';
+import { basename, extname, join } from 'path';
+import { randomUUID } from 'crypto';
 import { Itinerary } from './schemas/itinerary.schema';
 import { FxService } from './fx.service';
 import * as D from './dto/itinerary.dto';
 import type { AuthUser } from '../common/auth-user';
+import { UserRole } from '../users/users-role.enum';
+import { UploadsService } from '../uploads/uploads.service';
+import { UPLOADS_ROOT } from '../uploads/image-uploads.options';
 
 const addDays = (d: Date, n: number) => { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x; };
+const ITINERARY_UPLOADS_DIR = join(UPLOADS_ROOT, 'itineraries');
 
 @Injectable()
 export class ItinerariesService {
-  constructor(@InjectModel(Itinerary.name) private model: Model<Itinerary>, private fx: FxService) {}
+  constructor(
+    @InjectModel(Itinerary.name) private model: Model<Itinerary>,
+    private fx: FxService,
+    @Optional() private readonly uploads?: UploadsService,
+  ) {}
 
   // ---------- helpers ----------
+  private assertNotGuest(user: AuthUser) {
+    if (user.role === UserRole.GUEST) {
+      throw new ForbiddenException('A registered account is required to manage itineraries');
+    }
+  }
+
   /** Array order is the source of truth. Re-number + re-date every day (ITN-05/07/08). */
   private recompute(it: any) {
     it.days.forEach((d: any, i: number) => { d.dayNumber = i + 1; d.date = addDays(it.startDate, i); });
+  }
+
+  private resolveExistingImagePath(filename?: string): string | null {
+    if (!filename || typeof filename !== 'string') return null;
+    const safeName = basename(filename);
+    if (!safeName || safeName === '.' || safeName === '..') return null;
+    const candidates = [
+      join(ITINERARY_UPLOADS_DIR, safeName),
+      join(UPLOADS_ROOT, safeName), // legacy root uploads path
+    ];
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  private unlinkImageFiles(images: Array<{ filename?: string }> | undefined) {
+    if (!Array.isArray(images)) return;
+    for (const img of images) {
+      const filepath = this.resolveExistingImagePath(img?.filename);
+      if (filepath) {
+        try { unlinkSync(filepath); } catch { /* ignore */ }
+      }
+    }
+  }
+
+  private collectDayImages(day: any): Array<{ filename?: string }> {
+    const imgs: Array<{ filename?: string }> = [];
+    for (const act of day?.activities ?? []) {
+      for (const img of act?.images ?? []) imgs.push(img);
+    }
+    return imgs;
+  }
+
+  private collectItineraryImages(it: any): Array<{ filename?: string }> {
+    const imgs: Array<{ filename?: string }> = [];
+    for (const day of it?.days ?? []) {
+      imgs.push(...this.collectDayImages(day));
+    }
+    return imgs;
+  }
+
+  private async cleanupUploadedFile(file: Express.Multer.File) {
+    if (file?.filename && this.uploads) {
+      await this.uploads.deleteFile('itineraries', file.filename);
+    }
+    if (file?.path && existsSync(file.path)) {
+      try { unlinkSync(file.path); } catch { /* ignore */ }
+    }
   }
 
   async getOwned(id: string, user: AuthUser): Promise<any> {
@@ -43,16 +113,19 @@ export class ItinerariesService {
 
   // ---------- itinerary CRUD ----------
   create(dto: D.CreateItineraryDto, user: AuthUser) {
+    this.assertNotGuest(user);
     return this.model.create({ ...dto, startDate: new Date(dto.startDate), ownerId: user.id });
   }
 
   async listMine(user: AuthUser, page = 1, limit = 10) {
+    const safePage = Number.isFinite(page) ? Math.max(1, Math.floor(page)) : 1;
+    const safeLimit = Number.isFinite(limit) ? Math.min(50, Math.max(1, Math.floor(limit))) : 10;
     const filter = { ownerId: user.id };
     const [items, total] = await Promise.all([
-      this.model.find(filter).sort({ updatedAt: -1 }).skip((page - 1) * limit).limit(limit).select('-days.activities.images'),
+      this.model.find(filter).sort({ updatedAt: -1 }).skip((safePage - 1) * safeLimit).limit(safeLimit).select('-days.activities.images'),
       this.model.countDocuments(filter),
     ]);
-    return { items, total, page, limit };
+    return { items, total, page: safePage, limit: safeLimit };
   }
 
   getOne(id: string, user: AuthUser) { return this.getOwned(id, user); }
@@ -68,7 +141,9 @@ export class ItinerariesService {
 
   async remove(id: string, user: AuthUser) {
     const it = await this.getOwned(id, user);
+    const images = this.collectItineraryImages(it);
     await it.deleteOne();
+    this.unlinkImageFiles(images);
     return { deleted: true };
   }
 
@@ -94,9 +169,12 @@ export class ItinerariesService {
     const it = await this.getOwned(id, user);
     const day = it.days.id(dayId);
     if (!day) throw new NotFoundException('Day not found');
+    const images = this.collectDayImages(day);
     day.deleteOne();
     this.recompute(it);
-    return it.save();
+    const saved = await it.save();
+    this.unlinkImageFiles(images);
+    return saved;
   }
 
   async reorderDays(id: string, dto: D.ReorderDaysDto, user: AuthUser) {
@@ -127,24 +205,35 @@ export class ItinerariesService {
   }
   async removeActivity(actId: string, user: AuthUser) {
     const { it, child } = await this.findByChild('activities', actId, user);
-    child.deleteOne(); await it.save(); return { deleted: true };
+    const images = [...(child.images ?? [])];
+    child.deleteOne();
+    await it.save();
+    this.unlinkImageFiles(images);
+    return { deleted: true };
   }
   async addActivityImage(actId: string, file: Express.Multer.File, user: AuthUser) {
-    const { it, child } = await this.findByChild('activities', actId, user);
-    child.images.push({ url: `/uploads/${file.filename}`, filename: file.filename });
-    await it.save(); return child;
+    try {
+      if (this.uploads) {
+        await this.uploads.assertImageSignature(file);
+      }
+      const { it, child } = await this.findByChild('activities', actId, user);
+      child.images.push({ url: `/uploads/itineraries/${file.filename}`, filename: file.filename });
+      await it.save();
+      return child;
+    } catch (err) {
+      await this.cleanupUploadedFile(file);
+      throw err;
+    }
   }
   async removeActivityImage(actId: string, imageId: string, user: AuthUser) {
     const { it, child } = await this.findByChild('activities', actId, user);
     const img = child.images.id(imageId);
     if (!img) throw new NotFoundException('Image not found');
-    if (img.filename) {
-      const filepath = join(process.cwd(), 'uploads', img.filename);
-      if (existsSync(filepath)) {
-        try { unlinkSync(filepath); } catch { /* ignore */ }
-      }
-    }
-    img.deleteOne(); await it.save(); return { deleted: true };
+    const filename = img.filename;
+    img.deleteOne();
+    await it.save();
+    this.unlinkImageFiles([{ filename }]);
+    return { deleted: true };
   }
 
   // ---------- budgets ----------
@@ -223,10 +312,17 @@ export class ItinerariesService {
 
   // ---------- public + clone (ITN-20, ITN-21) ----------
   async publicSearch(q: { q?: string; country?: string; page?: number; limit?: number; sort?: string }) {
-    const page = Math.max(1, +(q.page ?? 1)); const limit = Math.min(50, +(q.limit ?? 10));
+    const rawPage = Number(q.page ?? 1);
+    const rawLimit = Number(q.limit ?? 10);
+    const page = Number.isFinite(rawPage) ? Math.max(1, Math.floor(rawPage)) : 1;
+    const limit = Number.isFinite(rawLimit) ? Math.min(50, Math.max(1, Math.floor(rawLimit))) : 10;
     const filter: any = { visibility: 'public', isHidden: { $ne: true }, ownerDeactivated: { $ne: true } };
-    if (q.country) filter.country = new RegExp(`^${q.country.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
-    if (q.q) filter.$text = { $search: q.q };
+    if (typeof q.country === 'string' && q.country.trim()) {
+      filter.country = new RegExp(`^${q.country.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+    }
+    if (typeof q.q === 'string' && q.q.trim()) {
+      filter.$text = { $search: q.q.trim() };
+    }
     const sort: any = q.sort === 'oldest' ? { createdAt: 1 } : { createdAt: -1 };
     const [items, total] = await Promise.all([
       this.model.find(filter).sort(sort).skip((page - 1) * limit).limit(limit).select('title country startDate ownerId createdAt'),
@@ -243,6 +339,7 @@ export class ItinerariesService {
   }
 
   async clone(id: string, user: AuthUser) {
+    this.assertNotGuest(user);
     if (!Types.ObjectId.isValid(id)) throw new NotFoundException('Public itinerary not found');
     const src: any = await this.model.findById(id);
     const isOwner = !!src && String(src.ownerId) === user.id;
@@ -255,20 +352,52 @@ export class ItinerariesService {
     };
     strip(plain);
     delete plain.createdAt; delete plain.updatedAt; delete plain.__v;
-    return this.model.create({
-      ...plain, ownerId: user.id, visibility: 'private', isHidden: false, ownerDeactivated: false,
-      title: plain.title, startDate: new Date(plain.startDate),
-      clonedFrom: { itineraryId: src._id, originalTitle: src.title, authorId: src.ownerId },
-    });
+
+    // Duplicate activity image files on disk so clone deletions never unlink the original author's files
+    const copiedFilenames: string[] = [];
+    try {
+      for (const day of plain.days ?? []) {
+        for (const act of day.activities ?? []) {
+          const clonedImages: Array<{ url: string; filename: string }> = [];
+          for (const img of act.images ?? []) {
+            const srcPath = this.resolveExistingImagePath(img?.filename);
+            if (!srcPath) continue;
+            mkdirSync(ITINERARY_UPLOADS_DIR, { recursive: true });
+            const ext = extname(basename(srcPath)).toLowerCase() || '.jpg';
+            const newFilename = `${randomUUID()}${ext}`;
+            copyFileSync(srcPath, join(ITINERARY_UPLOADS_DIR, newFilename));
+            copiedFilenames.push(newFilename);
+            clonedImages.push({ url: `/uploads/itineraries/${newFilename}`, filename: newFilename });
+          }
+          act.images = clonedImages;
+        }
+      }
+
+      return await this.model.create({
+        ...plain, ownerId: user.id, visibility: 'private', isHidden: false, ownerDeactivated: false,
+        title: plain.title, startDate: new Date(plain.startDate),
+        clonedFrom: { itineraryId: src._id, originalTitle: src.title, authorId: src.ownerId },
+      });
+    } catch (err) {
+      this.unlinkImageFiles(copiedFilenames.map((filename) => ({ filename })));
+      throw err;
+    }
   }
 
   // ---------- hooks for OTHER modules ----------
   /** Admin module calls this for GEN-10 (HIDE or DELETE). The admin module records the audit log entry. */
   async adminModerate(id: string, action: 'HIDE' | 'DELETE') {
+    if (!Types.ObjectId.isValid(id)) throw new NotFoundException('Itinerary not found');
     const it = await this.model.findById(id);
     if (!it) throw new NotFoundException('Itinerary not found');
-    if (action === 'DELETE') await it.deleteOne();
-    else { it.isHidden = true; await it.save(); }
+    if (action === 'DELETE') {
+      const images = this.collectItineraryImages(it);
+      await it.deleteOne();
+      this.unlinkImageFiles(images);
+    } else {
+      it.isHidden = true;
+      await it.save();
+    }
     return { type: 'itinerary', id, action };
   }
 

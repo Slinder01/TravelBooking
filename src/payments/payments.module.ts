@@ -8,6 +8,7 @@ import { RefundsService } from './refunds.service';
 import { PaymentsController } from './payments.controller';
 import { RefundsController } from './refunds.controller';
 import { FlightBookingsModule } from '../flight-bookings/flight-bookings.module';
+import { BookingModule } from '../bookings/booking.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { FlightBookingsModule } from '../flight-bookings/flight-bookings.module'
       { name: PolicyAcceptance.name, schema: PolicyAcceptanceSchema },
     ]),
     FlightBookingsModule,
+    BookingModule,
   ],
   controllers: [PaymentsController, RefundsController],
   providers: [PaymentsService, RefundsService],

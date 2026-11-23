@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import Stripe from 'stripe';
@@ -9,6 +9,7 @@ import type { AuthUser } from '../common/auth-user';
 import { BOOKING_STATUS } from '../common/booking-status';
 import { UserRole } from '../users/users-role.enum';
 import { FlightBookingsService } from '../flight-bookings/flight-bookings.service';
+import { BookingService } from '../bookings/booking.service';
 
 export interface PolicyTier { hoursBefore: number; refundPercent: number }
 
@@ -28,34 +29,58 @@ export class RefundsService {
     @InjectModel(Payment.name) private paymentModel: Model<Payment>,
     private payments: PaymentsService,
     private readonly flightBookingsService: FlightBookingsService,
+    @Optional() private readonly bookingService?: BookingService,
   ) {}
 
   /** Teammates call this from POST /flight-bookings/:id/cancel and POST /hotel-bookings/:id/cancel */
   async processCancellation(type: 'flight' | 'hotel', bookingId: string, user: AuthUser) {
     if (type === 'flight') {
       const b = await this.payments.loadOwnedBooking(type, bookingId, user);
-      const payment = await this.paymentModel.findOne({ bookingId: b._id, status: 'succeeded' });
+      const payment = await this.paymentModel.findOne({
+        bookingType: 'flight',
+        bookingId: b._id,
+        status: 'succeeded',
+      });
       const cancelResult = await this.flightBookingsService.cancelBooking(
         bookingId,
         { reason: 'Customer requested refund via payment service' },
         { id: user.id, email: user.email, role: user.role as any },
       );
+
+      // Unpaid HELD/PENDING_PAYMENT cancellations have no Payment record; do not create an invalid Refund
+      if (!payment) {
+        return {
+          cancelled: true,
+          refund: null,
+          refundAmount: 0,
+          booking: cancelResult.booking,
+        };
+      }
+
       const amount = cancelResult.refundAmount;
+      const currency = String(payment.currency || 'USD').toUpperCase();
+      const refundPercent =
+        amount <= 0
+          ? 0
+          : payment.amount > 0
+            ? Math.min(100, Math.round((amount / payment.amount) * 100))
+            : cancelResult.policyApplied.refundPercentage;
+
       const refund = await this.refundModel.create({
-        paymentId: payment?._id,
+        paymentId: payment._id,
         bookingId: b._id,
         bookingType: type,
         userId: b.userId,
         amount,
-        currency: payment?.currency ?? 'USD',
-        refundPercent: cancelResult.policyApplied.refundPercentage,
-        status: amount > 0 && payment ? 'pending' : 'not_applicable',
+        currency,
+        refundPercent,
+        status: amount > 0 ? 'pending' : 'not_applicable',
         policyApplied: cancelResult.policyApplied,
       });
 
-      if (amount > 0 && payment?.stripePaymentIntentId) {
+      if (amount > 0 && payment.stripePaymentIntentId) {
         try {
-          const zero = ['JPY', 'KRW', 'VND', 'CLP'].includes(payment.currency);
+          const zero = ['JPY', 'KRW', 'VND', 'CLP'].includes(currency);
           const r = await this.stripe.refunds.create({
             payment_intent: payment.stripePaymentIntentId,
             amount: zero ? Math.round(amount) : Math.round(amount * 100),
@@ -79,21 +104,26 @@ export class RefundsService {
       throw new BadRequestException('Event already started or passed');
     }
 
-    const payment = await this.paymentModel.findOne({ bookingId: b._id, status: 'succeeded' });
+    const payment = await this.paymentModel.findOne({
+      bookingType: 'hotel',
+      bookingId: b._id,
+      status: 'succeeded',
+    });
     if (!payment) throw new BadRequestException('No successful payment found');
 
     const percent = calculateRefundPercent(b.cancellationPolicy, eventDate);
     const amount = Math.round(payment.amount * percent) / 100;
+    const currency = String(payment.currency || 'USD').toUpperCase();
 
     const refund = await this.refundModel.create({
       paymentId: payment._id, bookingId: b._id, bookingType: type, userId: b.userId,
-      amount, currency: payment.currency, refundPercent: percent,
+      amount, currency, refundPercent: percent,
       status: amount > 0 ? 'pending' : 'not_applicable', policyApplied: b.cancellationPolicy,
     });
 
     if (amount > 0) {
       try {
-        const zero = ['JPY', 'KRW', 'VND', 'CLP'].includes(payment.currency);
+        const zero = ['JPY', 'KRW', 'VND', 'CLP'].includes(currency);
         const r = await this.stripe.refunds.create({
           payment_intent: payment.stripePaymentIntentId,
           amount: zero ? Math.round(amount) : Math.round(amount * 100),
@@ -106,7 +136,12 @@ export class RefundsService {
       await refund.save();
     }
 
-    await this.payments.bookingModel(type).updateOne({ _id: b._id }, { status: BOOKING_STATUS.CANCELLED });
+    // Delegate cancellation to BookingService so RoomAvailability nights are restored and status stays consistent ('cancelled')
+    if (this.bookingService) {
+      await this.bookingService.cancelBooking(bookingId, user.id);
+    } else {
+      await this.payments.bookingModel(type).updateOne({ _id: b._id }, { status: 'cancelled' });
+    }
     return refund;
   }
 
